@@ -1,0 +1,716 @@
+<?php
+/**
+ * Tesla Energy Foundation Mailer — Core Engine Functions
+ * Dual Gateway Dispatcher (Resend Paid API + Google Workspace SMTP)
+ */
+
+require_once __DIR__ . '/config.php';
+
+// Safe Database Connection with Auto Schema Initialization
+function db(): PDO {
+    static $pdo = null;
+    if ($pdo !== null) return $pdo;
+
+    if (!is_dir(DATA_DIR)) {
+        @mkdir(DATA_DIR, 0755, true);
+    }
+
+    $dbFile = DB_PATH;
+    $isNew = !file_exists($dbFile);
+
+    try {
+        $pdo = new PDO('sqlite:' . $dbFile, null, null, [
+            PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_TIMEOUT            => 10,
+        ]);
+        $pdo->exec('PRAGMA journal_mode = WAL;');
+        $pdo->exec('PRAGMA synchronous = NORMAL;');
+    } catch (PDOException $e) {
+        die('Database initialization failure: ' . htmlspecialchars($e->getMessage()));
+    }
+
+    if ($isNew || filesize($dbFile) === 0) {
+        init_schema($pdo);
+    }
+
+    return $pdo;
+}
+
+// Initialize tables and default seed data
+function init_schema(PDO $pdo): void {
+    $schemaFile = __DIR__ . '/../schema.sql';
+    if (file_exists($schemaFile)) {
+        $sql = file_get_contents($schemaFile);
+        $pdo->exec($sql);
+    }
+
+    // Default Admin User
+    $st = $pdo->prepare('SELECT COUNT(*) FROM users WHERE email = ?');
+    $st->execute([DEFAULT_ADMIN_EMAIL]);
+    if ((int)$st->fetchColumn() === 0) {
+        $hash = password_hash(DEFAULT_ADMIN_PASS, PASSWORD_DEFAULT);
+        $pdo->prepare('INSERT INTO users (username, email, password_hash, role, recovery_email) VALUES (?, ?, ?, ?, ?)')
+            ->execute([DEFAULT_ADMIN_USER, DEFAULT_ADMIN_EMAIL, $hash, 'admin', DEFAULT_REPLY_TO]);
+    }
+
+    // Seed default settings
+    $defaults = [
+        'sending_domain'          => SENDING_DOMAIN,
+        'reply_to_email'          => DEFAULT_REPLY_TO,
+        'default_from_name'       => DEFAULT_FROM_NAME,
+        'default_from_email'      => DEFAULT_FROM_EMAIL,
+        'resend_enabled'          => '1',
+        'resend_api_key'          => env('RESEND_API_KEY', ''),
+        'google_smtp_enabled'     => '1',
+        'google_smtp_host'        => env('SMTP_HOST', 'smtp.gmail.com'),
+        'google_smtp_port'        => env('SMTP_PORT', '465'),
+        'google_smtp_secure'      => '1',
+        'google_smtp_user'        => env('SMTP_USER', ''),
+        'google_smtp_pass'        => env('SMTP_PASS', ''),
+        'provider_mode'           => 'auto_balance', // auto_balance, resend_only, google_only, failover
+        'resend_ratio'            => '60',            // 60% Resend / 40% Google
+        'batch_size'              => '50',
+        'delay_between_emails_ms' => '150',
+        'delay_between_batches_ms'=> '1200'
+    ];
+
+    $checkSt = $pdo->prepare('SELECT COUNT(*) FROM settings WHERE key_name = ?');
+    $insertSt = $pdo->prepare('INSERT INTO settings (key_name, val) VALUES (?, ?)');
+
+    foreach ($defaults as $k => $v) {
+        $checkSt->execute([$k]);
+        if ((int)$checkSt->fetchColumn() === 0) {
+            $insertSt->execute([$k, $v]);
+        }
+    }
+
+    // Seed high-converting templates if empty
+    $tplCount = (int)$pdo->query('SELECT COUNT(*) FROM templates')->fetchColumn();
+    if ($tplCount === 0) {
+        seed_templates($pdo);
+    }
+}
+
+function seed_templates(PDO $pdo): void {
+    $ins = $pdo->prepare('INSERT INTO templates (name, category, subject, body_html) VALUES (?, ?, ?, ?)');
+
+    // Template 1
+    $ins->execute([
+        'Clean Energy Grant Allocation Notice',
+        'Grants & Awards',
+        'OFFICIAL ALLOCATION: Tesla Energy Foundation Community Grant Notification [Ref: {{ref_id}}]',
+        '<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #0f1115; margin: 0; padding: 24px; color: #1e293b; }
+  .wrapper { max-width: 620px; margin: 0 auto; background: #ffffff; border-radius: 14px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.15); border: 1px solid #e2e8f0; }
+  .header { background: #0f1115; padding: 36px 32px 30px; text-align: center; border-bottom: 3px solid #e82127; }
+  .brand-logo { font-size: 26px; font-weight: 800; letter-spacing: 4px; color: #ffffff; text-transform: uppercase; margin: 0; }
+  .brand-logo span { color: #e82127; }
+  .sub-tag { color: #94a3b8; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; margin-top: 6px; font-weight: 600; }
+  .content { padding: 36px 32px; font-size: 15px; line-height: 1.7; color: #334155; }
+  .greeting { font-size: 17px; font-weight: 700; color: #0f172a; margin-bottom: 16px; }
+  .badge-card { background: #f8fafc; border: 1px solid #e2e8f0; border-left: 5px solid #e82127; border-radius: 10px; padding: 20px 24px; margin: 24px 0; }
+  .badge-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; font-size: 14px; }
+  .badge-grid strong { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; margin-bottom: 2px; }
+  .badge-grid span { font-size: 16px; font-weight: 700; color: #0f172a; }
+  .cta-container { text-align: center; margin: 32px 0 24px; }
+  .cta-btn { background: #e82127; color: #ffffff !important; text-decoration: none; padding: 14px 34px; border-radius: 8px; font-weight: 700; font-size: 15px; display: inline-block; letter-spacing: 0.5px; }
+  .notice { font-size: 13px; color: #64748b; background: #fffbeb; border: 1px solid #fef3c7; border-radius: 8px; padding: 14px 18px; margin: 20px 0; }
+  .footer { background: #f8fafc; padding: 24px 32px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0; line-height: 1.6; }
+</style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="header">
+      <div class="brand-logo">T E S L A <span>ENERGY</span></div>
+      <div class="sub-tag">Foundation & Community Grants Program</div>
+    </div>
+    <div class="content">
+      <div class="greeting">Dear {{name}},</div>
+      <p>We are pleased to inform you that your application profile has been allocated funding under the <strong>Tesla Energy Sustainable Community Fund 2026</strong>. This disbursement initiative was instituted to support residential solar integration, high-capacity battery storage distribution, and regional clean energy expansion.</p>
+      
+      <div class="badge-card">
+        <div class="badge-grid">
+          <div>
+            <strong>Beneficiary File ID</strong>
+            <span>{{ref_id}}</span>
+          </div>
+          <div>
+            <strong>Allocated Amount</strong>
+            <span style="color:#059669;">{{grant_amount}}</span>
+          </div>
+          <div>
+            <strong>Disbursement Status</strong>
+            <span style="color:#e82127;">Verified Pending</span>
+          </div>
+          <div>
+            <strong>Registered Email</strong>
+            <span>{{email}}</span>
+          </div>
+        </div>
+      </div>
+
+      <p>To proceed with claim authorization and review the official beneficiary disclosure guidelines, please access your verified portal below or submit your verification dossier via reply.</p>
+
+      <div class="cta-container">
+        <a href="https://teslafoundationreward.com/claim?ref={{ref_id}}" class="cta-btn">Access Claim Portal &rarr;</a>
+      </div>
+
+      <div class="notice">
+        <strong>Important Notice:</strong> Allocation grants must be validated within 14 business days of issuance. Direct inquiries or support documentation must be addressed to our claims desk at <code>support@teslafoundationreward.com</code>.
+      </div>
+    </div>
+    <div class="footer">
+      &copy; 2026 Tesla Energy Foundation. All rights reserved.<br>
+      Tesla Energy Sustainable Infrastructure &amp; Grants Division &bull; 1 Tesla Road, Austin, TX 78725<br>
+      Dispatched via verified infrastructure: teslaenergyfoundation.com &bull; Inbound Desk: teslafoundationreward.com
+    </div>
+  </div>
+</body>
+</html>'
+    ]);
+
+    // Template 2
+    $ins->execute([
+        'Energy Independence Reward Certificate',
+        'Grants & Awards',
+        'CONFIRMATION: Tesla Foundation Energy Independence Award Allocation — Cert #{{ref_id}}',
+        '<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #0b0f19; margin: 0; padding: 24px; color: #1e293b; }
+  .card { max-width: 620px; margin: 0 auto; background: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #1e293b; }
+  .head { background: linear-gradient(135deg, #111827 0%, #1f2937 100%); padding: 36px 30px; text-align: center; border-bottom: 4px solid #e82127; }
+  .title { color: #ffffff; font-size: 22px; font-weight: 800; letter-spacing: 2px; text-transform: uppercase; margin: 0; }
+  .sub { color: #e82127; font-size: 13px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; margin-top: 6px; }
+  .body { padding: 32px 30px; font-size: 15px; line-height: 1.7; color: #334155; }
+  .box { background: #f1f5f9; border-radius: 10px; padding: 20px; margin: 24px 0; border: 1px solid #cbd5e1; }
+  .btn { display: inline-block; background: #e82127; color: #ffffff !important; padding: 14px 32px; border-radius: 8px; font-weight: 700; text-decoration: none; margin-top: 15px; }
+  .foot { background: #f8fafc; padding: 22px 30px; text-align: center; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="head">
+      <div class="title">TESLA FOUNDATION REWARD</div>
+      <div class="sub">Renewable Infrastructure Endowment</div>
+    </div>
+    <div class="body">
+      <p>Greetings <strong>{{name}}</strong>,</p>
+      <p>We are pleased to provide formal documentation of your grant allotment under the Tesla Foundation clean infrastructure project. This certificate is registered under Reference <strong>{{ref_id}}</strong>.</p>
+      
+      <div class="box">
+        <div style="font-weight:700;font-size:14px;color:#0f172a;margin-bottom:12px;text-transform:uppercase;letter-spacing:1px;">Grant Award Certificate Details</div>
+        <div style="font-size:14px;">
+          <p style="margin:4px 0;"><strong>Recipient:</strong> {{name}} ({{email}})</p>
+          <p style="margin:4px 0;"><strong>Grant Valuation:</strong> <span style="color:#059669;font-weight:700;font-size:16px;">{{grant_amount}}</span></p>
+          <p style="margin:4px 0;"><strong>Issuing Authority:</strong> Tesla Energy Foundation</p>
+          <p style="margin:4px 0;"><strong>Processing Center:</strong> teslafoundationreward.com</p>
+        </div>
+      </div>
+
+      <p>For security, please confirm receipt of this notification or proceed to verify your credentials on our designated intake platform.</p>
+
+      <div style="text-align:center;">
+        <a href="https://teslafoundationreward.com/verify?id={{ref_id}}" class="btn">Verify &amp; Proceed With Claim</a>
+      </div>
+    </div>
+    <div class="foot">
+      Tesla Energy Foundation &bull; Sending Domain: teslaenergyfoundation.com<br>
+      To respond or inquire, reply directly to this email or write to support@teslafoundationreward.com.
+    </div>
+  </div>
+</body>
+</html>'
+    ]);
+}
+
+// Settings Helpers
+function get_setting(string $key, string $default = ''): string {
+    $pdo = db();
+    $st = $pdo->prepare('SELECT val FROM settings WHERE key_name = ? LIMIT 1');
+    $st->execute([$key]);
+    $res = $st->fetchColumn();
+    return ($res !== false && $res !== null) ? (string)$res : $default;
+}
+
+function set_setting(string $key, string $val): void {
+    $pdo = db();
+    $st = $pdo->prepare('INSERT INTO settings (key_name, val, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(key_name) DO UPDATE SET val = excluded.val, updated_at = CURRENT_TIMESTAMP');
+    $st->execute([$key, $val]);
+}
+
+// Security & CSRF
+function csrf_token(): string {
+    if (empty($_SESSION['csrf_token'])) {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    }
+    return $_SESSION['csrf_token'];
+}
+
+function csrf_field(): string {
+    return '<input type="hidden" name="csrf_token" value="' . htmlspecialchars(csrf_token()) . '">';
+}
+
+function csrf_check(): bool {
+    $token = $_POST['csrf_token'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
+    return !empty($_SESSION['csrf_token']) && hash_equals($_SESSION['csrf_token'], (string)$token);
+}
+
+// Flash Notifications
+function flash(string $type, string $msg): void {
+    $_SESSION['flash'] = ['type' => $type, 'msg' => $msg];
+}
+
+function get_flash(): ?array {
+    $f = $_SESSION['flash'] ?? null;
+    unset($_SESSION['flash']);
+    return $f;
+}
+
+function clean(string $val, int $max = 255): string {
+    return mb_substr(trim((string)$val), 0, $max, 'UTF-8');
+}
+
+function e(?string $s): string {
+    return htmlspecialchars($s ?? '', ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+}
+
+function is_authed(): bool {
+    return !empty($_SESSION['user_id']);
+}
+
+function current_user(): ?array {
+    if (!is_authed()) return null;
+    return $_SESSION['user_data'] ?? null;
+}
+
+// Variable Interpolation ({{name}}, {{ref_id}}, etc.)
+function interpolate_tags(string $template, array $vars): string {
+    return preg_replace_callback('/\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}/', function($m) use ($vars) {
+        $k = $m[1];
+        return isset($vars[$k]) ? (string)$vars[$k] : $m[0];
+    }, $template);
+}
+
+function generate_ref(): string {
+    $chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    $code = 'TEF-';
+    for ($i = 0; $i < 4; $i++) $code .= $chars[random_int(0, strlen($chars) - 1)];
+    $code .= '-';
+    for ($i = 0; $i < 4; $i++) $code .= $chars[random_int(0, strlen($chars) - 1)];
+    return $code;
+}
+
+/**
+ * 1. RESEND DISPATCHER (HTTPS cURL API)
+ */
+function send_resend_email(
+    $to,
+    string $subject,
+    string $htmlBody,
+    string $textBody = '',
+    string $fromName = '',
+    string $fromEmail = '',
+    string $replyTo = ''
+): array {
+    $apiKey = get_setting('resend_api_key', env('RESEND_API_KEY', ''));
+    if (empty($apiKey)) {
+        return ['ok' => false, 'error' => 'Resend API key is missing.', 'provider' => 'resend'];
+    }
+
+    $finalFromName = $fromName ?: get_setting('default_from_name', DEFAULT_FROM_NAME);
+    $finalFromEmail = $fromEmail ?: get_setting('default_from_email', DEFAULT_FROM_EMAIL);
+    $finalFrom = $finalFromName . ' <' . $finalFromEmail . '>';
+    $finalReplyTo = $replyTo ?: get_setting('reply_to_email', DEFAULT_REPLY_TO);
+
+    $toArr = is_array($to) ? $to : array_map('trim', explode(',', (string)$to));
+    $validRecipients = [];
+    foreach ($toArr as $m) {
+        $cleanM = filter_var($m, FILTER_VALIDATE_EMAIL);
+        if ($cleanM) $validRecipients[] = $cleanM;
+    }
+    $validRecipients = array_values(array_unique($validRecipients));
+
+    if (empty($validRecipients)) {
+        return ['ok' => false, 'error' => 'No valid recipient email address specified.', 'provider' => 'resend'];
+    }
+
+    $payload = [
+        'from'    => $finalFrom,
+        'to'      => $validRecipients,
+        'subject' => $subject,
+        'html'    => $htmlBody,
+        'text'    => $textBody ?: strip_tags(preg_replace('/<br\s*\/?>/i', "\n", $htmlBody))
+    ];
+
+    if (!empty($finalReplyTo)) {
+        $payload['reply_to'] = $finalReplyTo;
+    }
+
+    $ch = curl_init('https://api.resend.com/emails');
+    curl_setopt_array($ch, [
+        CURLOPT_POST           => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 15,
+        CURLOPT_HTTPHEADER     => [
+            'Authorization: Bearer ' . $apiKey,
+            'Content-Type: application/json'
+        ],
+        CURLOPT_POSTFIELDS     => json_encode($payload)
+    ]);
+
+    $raw = curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr = curl_error($ch);
+    curl_close($ch);
+
+    $ok = ($code >= 200 && $code < 300);
+    $data = json_decode((string)$raw, true);
+    $resendId = $data['id'] ?? '';
+    $errMsg = !$ok ? ($data['message'] ?? ($curlErr ?: "HTTP $code: $raw")) : '';
+
+    return [
+        'ok'       => $ok,
+        'id'       => $resendId,
+        'error'    => $errMsg,
+        'provider' => 'resend',
+        'code'     => $code,
+        'to'       => $validRecipients
+    ];
+}
+
+/**
+ * 2. GOOGLE WORKSPACE SMTP DISPATCHER (Pure PHP Stream Socket)
+ * Supports SSL (port 465) and STARTTLS (port 587) with App Passwords and Reply-To injection.
+ */
+function send_google_smtp_email(
+    $to,
+    string $subject,
+    string $htmlBody,
+    string $textBody = '',
+    string $fromName = '',
+    string $fromEmail = '',
+    string $replyTo = ''
+): array {
+    $host = get_setting('google_smtp_host', env('SMTP_HOST', 'smtp.gmail.com'));
+    $port = (int)get_setting('google_smtp_port', env('SMTP_PORT', '465'));
+    $user = trim(get_setting('google_smtp_user', env('SMTP_USER', '')));
+    $pass = trim(str_replace(' ', '', get_setting('google_smtp_pass', env('SMTP_PASS', ''))));
+
+    if (empty($user) || empty($pass)) {
+        return ['ok' => false, 'error' => 'Google Workspace SMTP user or App Password is not configured.', 'provider' => 'google_workspace'];
+    }
+
+    $finalFromName = $fromName ?: get_setting('default_from_name', DEFAULT_FROM_NAME);
+    $finalFromEmail = $fromEmail ?: get_setting('default_from_email', DEFAULT_FROM_EMAIL);
+    $finalReplyTo = $replyTo ?: get_setting('reply_to_email', DEFAULT_REPLY_TO);
+
+    $toArr = is_array($to) ? $to : array_map('trim', explode(',', (string)$to));
+    $validRecipients = [];
+    foreach ($toArr as $m) {
+        $cleanM = filter_var($m, FILTER_VALIDATE_EMAIL);
+        if ($cleanM) $validRecipients[] = $cleanM;
+    }
+    $validRecipients = array_values(array_unique($validRecipients));
+
+    if (empty($validRecipients)) {
+        return ['ok' => false, 'error' => 'No valid recipient email address specified.', 'provider' => 'google_workspace'];
+    }
+
+    $targetProto = ($port === 465) ? 'ssl://' : 'tcp://';
+    $fp = @stream_socket_client($targetProto . "$host:$port", $errno, $errstr, 12, STREAM_CLIENT_CONNECT);
+    if (!$fp) {
+        return ['ok' => false, 'error' => "SMTP connect failed to $host:$port ($errstr)", 'provider' => 'google_workspace'];
+    }
+    stream_set_timeout($fp, 12);
+
+    $read = function() use ($fp) {
+        $d = '';
+        while (($l = fgets($fp, 515)) !== false) {
+            $d .= $l;
+            if (isset($l[3]) && $l[3] === ' ') break;
+        }
+        return $d;
+    };
+
+    $cmd = function(string $c, array $okCodes) use ($fp, $read) {
+        if ($c !== '') fwrite($fp, $c . "\r\n");
+        $r = $read();
+        $code = (int)substr($r, 0, 3);
+        if (!in_array($code, $okCodes, true)) {
+            throw new RuntimeException("SMTP Command [".substr($c,0,15)."] failed ($code): " . trim($r));
+        }
+        return $r;
+    };
+
+    try {
+        $cmd('', [220]);
+        $cmd('EHLO ' . SENDING_DOMAIN, [250]);
+
+        if ($port !== 465) {
+            $cmd('STARTTLS', [220]);
+            stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
+            $cmd('EHLO ' . SENDING_DOMAIN, [250]);
+        }
+
+        $cmd('AUTH LOGIN', [334]);
+        $cmd(base64_encode($user), [334]);
+        $cmd(base64_encode($pass), [235]);
+
+        $cmd('MAIL FROM:<' . $finalFromEmail . '>', [250]);
+        foreach ($validRecipients as $r) {
+            $cmd("RCPT TO:<$r>", [250, 251]);
+        }
+
+        $cmd('DATA', [354]);
+
+        $boundary = '=_tef_' . bin2hex(random_bytes(16));
+        $msgId = '<' . time() . '.' . bin2hex(random_bytes(8)) . '@' . SENDING_DOMAIN . '>';
+
+        $headers = [
+            'Date: ' . date('r'),
+            'From: ' . $finalFromName . ' <' . $finalFromEmail . '>',
+            'To: ' . implode(', ', $validRecipients),
+            'Subject: =?UTF-8?B?' . base64_encode($subject) . '?=',
+            'Message-ID: ' . $msgId,
+            'MIME-Version: 1.0',
+            'Content-Type: multipart/alternative; boundary="' . $boundary . '"'
+        ];
+
+        if (!empty($finalReplyTo)) {
+            $headers[] = 'Reply-To: ' . $finalReplyTo;
+        }
+
+        $plain = $textBody ?: strip_tags(preg_replace('/<br\s*\/?>/i', "\n", $htmlBody));
+
+        $body = implode("\r\n", $headers) . "\r\n\r\n";
+        $body .= "--" . $boundary . "\r\n";
+        $body .= "Content-Type: text/plain; charset=UTF-8\r\n";
+        $body .= "Content-Transfer-Encoding: 8bit\r\n\r\n";
+        $body .= $plain . "\r\n\r\n";
+        $body .= "--" . $boundary . "\r\n";
+        $body .= "Content-Type: text/html; charset=UTF-8\r\n";
+        $body .= "Content-Transfer-Encoding: 8bit\r\n\r\n";
+        $body .= $htmlBody . "\r\n\r\n";
+        $body .= "--" . $boundary . "--\r\n";
+
+        // Dot stuffing
+        $body = preg_replace('/^\./m', '..', str_replace(["\r\n", "\n"], ["\n", "\r\n"], $body));
+        $cmd($body . "\r\n.", [250]);
+
+        fwrite($fp, "QUIT\r\n");
+        fclose($fp);
+
+        return [
+            'ok'       => true,
+            'id'       => $msgId,
+            'error'    => '',
+            'provider' => 'google_workspace',
+            'to'       => $validRecipients
+        ];
+
+    } catch (Throwable $e) {
+        @fclose($fp);
+        return [
+            'ok'       => false,
+            'error'    => $e->getMessage(),
+            'provider' => 'google_workspace'
+        ];
+    }
+}
+
+/**
+ * 3. DUAL ROUTER & INTELLIGENT LOAD BALANCER
+ * Balances dispatch across Resend and Google Workspace, with automatic failover!
+ */
+function send_dual_email(
+    $to,
+    string $subject,
+    string $htmlBody,
+    string $textBody = '',
+    string $fromName = '',
+    string $fromEmail = '',
+    string $replyTo = '',
+    string $preferredProvider = '',
+    ?int $campaignId = null
+): array {
+    static $balanceCounter = 0;
+    $balanceCounter++;
+
+    $mode = $preferredProvider ?: get_setting('provider_mode', 'auto_balance');
+    $resendRatio = (int)get_setting('resend_ratio', '60');
+    $isResendEnabled = get_setting('resend_enabled', '1') === '1';
+    $isGoogleEnabled = get_setting('google_smtp_enabled', '1') === '1';
+
+    $chosenProvider = 'resend';
+
+    if ($mode === 'resend_only') {
+        $chosenProvider = 'resend';
+    } elseif ($mode === 'google_only') {
+        $chosenProvider = 'google_workspace';
+    } elseif ($mode === 'auto_balance') {
+        if ($isResendEnabled && $isGoogleEnabled) {
+            $mod = ($balanceCounter + random_int(0, 99)) % 100;
+            $chosenProvider = ($mod < $resendRatio) ? 'resend' : 'google_workspace';
+        } elseif ($isGoogleEnabled) {
+            $chosenProvider = 'google_workspace';
+        } else {
+            $chosenProvider = 'resend';
+        }
+    } else { // failover
+        $chosenProvider = $isResendEnabled ? 'resend' : 'google_workspace';
+    }
+
+    $res = null;
+
+    if ($chosenProvider === 'resend') {
+        $res = send_resend_email($to, $subject, $htmlBody, $textBody, $fromName, $fromEmail, $replyTo);
+    } else {
+        $res = send_google_smtp_email($to, $subject, $htmlBody, $textBody, $fromName, $fromEmail, $replyTo);
+    }
+
+    // Auto Failover to alternate gateway if primary failed
+    if (empty($res['ok']) && ($mode === 'auto_balance' || $mode === 'failover') && $isResendEnabled && $isGoogleEnabled) {
+        $alternateProvider = ($chosenProvider === 'resend') ? 'google_workspace' : 'resend';
+        if ($alternateProvider === 'resend') {
+            $altRes = send_resend_email($to, $subject, $htmlBody, $textBody, $fromName, $fromEmail, $replyTo);
+        } else {
+            $altRes = send_google_smtp_email($to, $subject, $htmlBody, $textBody, $fromName, $fromEmail, $replyTo);
+        }
+
+        if (!empty($altRes['ok'])) {
+            $res = $altRes;
+            $chosenProvider = $alternateProvider;
+        } else {
+            $res['error'] .= ' | Failover (' . $alternateProvider . ') also failed: ' . ($altRes['error'] ?? 'unknown');
+        }
+    }
+
+    // Persist to email_logs audit
+    try {
+        $pdo = db();
+        $targetStr = is_array($to) ? implode(', ', $to) : (string)$to;
+        $snippet = mb_substr(strip_tags($textBody ?: $htmlBody), 0, 160);
+        $finalFromEmail = $fromEmail ?: get_setting('default_from_email', DEFAULT_FROM_EMAIL);
+        $finalFromName = $fromName ?: get_setting('default_from_name', DEFAULT_FROM_NAME);
+        $finalReplyTo = $replyTo ?: get_setting('reply_to_email', DEFAULT_REPLY_TO);
+
+        $st = $pdo->prepare('INSERT INTO email_logs (
+            campaign_id, provider, message_id, from_address, from_name,
+            to_address, reply_to, subject, body_html, body_text, snippet,
+            status, error_message, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)');
+
+        $st->execute([
+            $campaignId,
+            $chosenProvider,
+            $res['id'] ?? null,
+            $finalFromEmail,
+            $finalFromName,
+            $targetStr,
+            $finalReplyTo,
+            $subject,
+            $htmlBody,
+            $textBody ?: strip_tags($htmlBody),
+            $snippet,
+            !empty($res['ok']) ? 'sent' : 'failed',
+            !empty($res['ok']) ? null : ($res['error'] ?? 'Unknown error')
+        ]);
+    } catch (Throwable $logErr) {
+        error_log('[Tesla Mailer Log Error] ' . $logErr->getMessage());
+    }
+
+    return $res;
+}
+
+/**
+ * Gateway Diagnostic Verification Tests
+ */
+function test_resend_api(?string $apiKey = null): array {
+    $key = $apiKey ?: get_setting('resend_api_key', env('RESEND_API_KEY', ''));
+    if (empty($key)) return ['ok' => false, 'error' => 'API Key is empty'];
+
+    $ch = curl_init('https://api.resend.com/api-keys');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 8,
+        CURLOPT_HTTPHEADER     => ['Authorization: Bearer ' . $key]
+    ]);
+    $raw = curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($code >= 200 && $code < 300) {
+        return ['ok' => true, 'message' => 'Resend Paid API connection authenticated successfully!'];
+    }
+    $d = json_decode((string)$raw, true);
+    return ['ok' => false, 'error' => $d['message'] ?? "Resend returned HTTP $code"];
+}
+
+function test_google_smtp(?string $host = null, ?int $port = null, ?string $user = null, ?string $pass = null): array {
+    $host = $host ?: get_setting('google_smtp_host', env('SMTP_HOST', 'smtp.gmail.com'));
+    $port = $port ?: (int)get_setting('google_smtp_port', env('SMTP_PORT', '465'));
+    $user = trim($user ?: get_setting('google_smtp_user', env('SMTP_USER', '')));
+    $pass = trim(str_replace(' ', '', $pass ?: get_setting('google_smtp_pass', env('SMTP_PASS', ''))));
+
+    if (empty($user) || empty($pass)) {
+        return ['ok' => false, 'error' => 'Google Workspace user email or App Password cannot be blank.'];
+    }
+
+    $targetProto = ($port === 465) ? 'ssl://' : 'tcp://';
+    $fp = @stream_socket_client($targetProto . "$host:$port", $errno, $errstr, 8, STREAM_CLIENT_CONNECT);
+    if (!$fp) {
+        return ['ok' => false, 'error' => "Cannot connect to $host:$port ($errstr)"];
+    }
+    stream_set_timeout($fp, 8);
+
+    $read = function() use ($fp) {
+        $d = '';
+        while (($l = fgets($fp, 515)) !== false) {
+            $d .= $l;
+            if (isset($l[3]) && $l[3] === ' ') break;
+        }
+        return $d;
+    };
+
+    try {
+        $r = $read();
+        fwrite($fp, "EHLO " . SENDING_DOMAIN . "\r\n");
+        $r = $read();
+
+        if ($port !== 465) {
+            fwrite($fp, "STARTTLS\r\n");
+            $r = $read();
+            stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
+            fwrite($fp, "EHLO " . SENDING_DOMAIN . "\r\n");
+            $r = $read();
+        }
+
+        fwrite($fp, "AUTH LOGIN\r\n");
+        $r = $read();
+        fwrite($fp, base64_encode($user) . "\r\n");
+        $r = $read();
+        fwrite($fp, base64_encode($pass) . "\r\n");
+        $r = $read();
+
+        $code = (int)substr($r, 0, 3);
+        fwrite($fp, "QUIT\r\n");
+        fclose($fp);
+
+        if ($code === 235) {
+            return ['ok' => true, 'message' => "Connected to Google Workspace ($host:$port) and authenticated as $user successfully!"];
+        }
+        return ['ok' => false, 'error' => "Authentication failed ($code): " . trim($r)];
+    } catch (Throwable $e) {
+        @fclose($fp);
+        return ['ok' => false, 'error' => $e->getMessage()];
+    }
+}
