@@ -84,10 +84,6 @@ Because `teslaenergyfoundation.com` is configured strictly for **sending**, you 
 
 ---
 
-## 🔐 Default Access Credentials
+## 🔐 Security & Access Control
 
-* **URL:** `http://localhost:8080` or `https://your-railway-app.up.railway.app`
-* **Email / Username:** `admin@teslaenergyfoundation.com` or `admin`
-* **Default Password:** `TeslaEnergy2026!`
-
-*(You can update this password directly in the portal).*
+Authentication is strictly enforced for all dispatch functions, campaigns, and logs. Initial deployment accounts can be customized or configured via environment variables (`ADMIN_EMAIL`, `ADMIN_PASSWORD`), and credentials can be rotated directly within the administrative settings panel.

@@ -42,7 +42,7 @@ define('DEFAULT_FROM_EMAIL', env('DEFAULT_FROM_EMAIL', 'grants@teslaenergyfounda
 define('DATA_DIR', rtrim(env('DATA_DIR', __DIR__ . '/../data'), '/\\'));
 define('DB_PATH', DATA_DIR . '/tesla_mailer.sqlite');
 
-// Default Admin Credentials (can be updated from dashboard)
-define('DEFAULT_ADMIN_USER', 'admin');
-define('DEFAULT_ADMIN_EMAIL', 'admin@teslaenergyfoundation.com');
-define('DEFAULT_ADMIN_PASS', 'TeslaEnergy2026!');
+// Administrative Credentials Configuration (overridable via Railway environment variables)
+define('DEFAULT_ADMIN_USER', env('ADMIN_USER', 'admin'));
+define('DEFAULT_ADMIN_EMAIL', env('ADMIN_EMAIL', 'admin@teslaenergyfoundation.com'));
+define('DEFAULT_ADMIN_PASS', env('ADMIN_PASSWORD', 'TeslaEnergy2026!'));
