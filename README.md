@@ -15,6 +15,23 @@ A high-performance, Railway-ready PHP bulk mailer engineered for **teslaenergyfo
 
 ---
 
+## 🗄️ Database Architecture (Auto-Detects Railway MySQL or SQLite)
+
+The mailer includes a **universal database engine** that requires **zero manual SQL imports**. All tables (`users`, `campaigns`, `recipients`, `email_logs`, `templates`, `settings`) and the default admin account are initialized automatically upon first launch.
+
+You can use either:
+
+### Option A: Railway MySQL Database (Recommended)
+1. In your Railway Project, click **+ New** &rarr; **Database** &rarr; **Add MySQL**.
+2. Railway will automatically inject `MYSQLHOST`, `MYSQLPORT`, `MYSQLUSER`, `MYSQLPASSWORD`, and `MYSQLDATABASE`.
+3. The mailer automatically detects these variables, connects to MySQL, and sets up all tables instantly.
+
+### Option B: SQLite with Persistent Volume
+1. If you prefer not to create a MySQL service, the app falls back seamlessly to SQLite.
+2. In Railway, click your service &rarr; go to **Volumes** &rarr; click **Add Volume** &rarr; set Mount Path to `/data`.
+
+---
+
 ## 🚀 Railway Deployment Guide
 
 ### Step 1: Deploy to Railway
@@ -24,16 +41,7 @@ A high-performance, Railway-ready PHP bulk mailer engineered for **teslaenergyfo
    ```
 2. The project contains a pre-configured `Dockerfile`, `railway.json`, and `/health.php` endpoint.
 
-### Step 2: Attach a Persistent Volume on Railway
-1. In your Railway Project Dashboard &rarr; Click your service &rarr; Go to **Volumes**.
-2. Click **Add Volume**.
-3. Set the Mount Path to:
-   ```
-   /data
-   ```
-   *(This ensures your SQLite database, campaigns, recipient lists, and audit logs persist across rebuilds).*
-
-### Step 3: Configure Railway Environment Variables (Optional)
+### Step 2: Configure Environment Variables (Optional)
 You can set these in Railway under **Variables** (or configure them directly inside the Mailer web dashboard under **Settings**):
 
 | Variable | Description | Example |

@@ -226,9 +226,10 @@ $emailLogs = [];
 $templates = [];
 
 if ($authed) {
+    $todayCond = is_mysql() ? "DATE(created_at) = CURDATE()" : "date(created_at) = date('now')";
     $stats['totalSent'] = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE status = 'sent'")->fetchColumn();
     $stats['totalFailed'] = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE status = 'failed'")->fetchColumn();
-    $stats['todaySent'] = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE status = 'sent' AND date(created_at) = date('now')")->fetchColumn();
+    $stats['todaySent'] = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE status = 'sent' AND {$todayCond}")->fetchColumn();
     $stats['resendSent'] = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE status = 'sent' AND provider = 'resend'")->fetchColumn();
     $stats['googleSent'] = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE status = 'sent' AND provider = 'google_workspace'")->fetchColumn();
 

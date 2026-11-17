@@ -3,6 +3,7 @@ FROM php:8.3-apache
 
 RUN a2dismod -f mpm_event mpm_worker 2>/dev/null || true \
  && a2enmod mpm_prefork rewrite headers expires deflate remoteip \
+ && docker-php-ext-install pdo_mysql \
  && sed -ri 's/AllowOverride None/AllowOverride All/g' /etc/apache2/apache2.conf \
  && echo 'ServerName localhost' > /etc/apache2/conf-available/servername.conf && a2enconf servername \
  && printf 'RemoteIPHeader X-Forwarded-For\nRemoteIPInternalProxy 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.0/8\n' > /etc/apache2/conf-available/remoteip.conf && a2enconf remoteip \

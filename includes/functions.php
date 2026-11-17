@@ -2,50 +2,143 @@
 /**
  * Tesla Energy Foundation Mailer — Core Engine Functions
  * Dual Gateway Dispatcher (Resend Paid API + Google Workspace SMTP)
+ * Universal Database Support: Railway MySQL + SQLite Auto-Switch
  */
 
 require_once __DIR__ . '/config.php';
 
-// Safe Database Connection with Auto Schema Initialization
+function is_mysql(): bool {
+    $host = env('MYSQLHOST');
+    return !empty($host);
+}
+
+// Universal PDO Database Connection (Auto-detects Railway MySQL or SQLite)
 function db(): PDO {
     static $pdo = null;
     if ($pdo !== null) return $pdo;
 
-    if (!is_dir(DATA_DIR)) {
-        @mkdir(DATA_DIR, 0755, true);
+    $mysqlHost = env('MYSQLHOST');
+    $isMySQL = !empty($mysqlHost);
+
+    if ($isMySQL) {
+        $dbName = env('MYSQLDATABASE', 'railway');
+        $user = env('MYSQLUSER', 'root');
+        $pass = env('MYSQLPASSWORD', '');
+        $port = env('MYSQLPORT', '3306');
+        $dsn = "mysql:host=$mysqlHost;port=$port;dbname=$dbName;charset=utf8mb4";
+        try {
+            $pdo = new PDO($dsn, $user, $pass, [
+                PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_TIMEOUT            => 10,
+            ]);
+        } catch (PDOException $e) {
+            die('MySQL database connection failure: ' . htmlspecialchars($e->getMessage()));
+        }
+    } else {
+        if (!is_dir(DATA_DIR)) {
+            @mkdir(DATA_DIR, 0755, true);
+        }
+        $dbFile = DB_PATH;
+        try {
+            $pdo = new PDO('sqlite:' . $dbFile, null, null, [
+                PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_TIMEOUT            => 10,
+            ]);
+            $pdo->exec('PRAGMA journal_mode = WAL;');
+            $pdo->exec('PRAGMA synchronous = NORMAL;');
+        } catch (PDOException $e) {
+            die('SQLite database initialization failure: ' . htmlspecialchars($e->getMessage()));
+        }
     }
 
-    $dbFile = DB_PATH;
-    $isNew = !file_exists($dbFile);
-
-    try {
-        $pdo = new PDO('sqlite:' . $dbFile, null, null, [
-            PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-            PDO::ATTR_TIMEOUT            => 10,
-        ]);
-        $pdo->exec('PRAGMA journal_mode = WAL;');
-        $pdo->exec('PRAGMA synchronous = NORMAL;');
-    } catch (PDOException $e) {
-        die('Database initialization failure: ' . htmlspecialchars($e->getMessage()));
-    }
-
-    if ($isNew || filesize($dbFile) === 0) {
-        init_schema($pdo);
-    }
-
+    init_schema($pdo, $isMySQL);
     return $pdo;
 }
 
-// Initialize tables and default seed data
-function init_schema(PDO $pdo): void {
-    $schemaFile = __DIR__ . '/../schema.sql';
-    if (file_exists($schemaFile)) {
-        $sql = file_get_contents($schemaFile);
-        $pdo->exec($sql);
-    }
+// Auto Schema Initializer & Default Seeder
+function init_schema(PDO $pdo, bool $isMySQL = false): void {
+    $ai = $isMySQL ? 'INT AUTO_INCREMENT PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT';
+    $textType = $isMySQL ? 'LONGTEXT' : 'TEXT';
 
-    // Default Admin User
+    $pdo->exec("CREATE TABLE IF NOT EXISTS users (
+        id $ai,
+        username VARCHAR(80) NOT NULL UNIQUE,
+        email VARCHAR(120) NOT NULL UNIQUE,
+        password_hash VARCHAR(255) NOT NULL,
+        role VARCHAR(30) DEFAULT 'admin',
+        recovery_email VARCHAR(120),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS campaigns (
+        id $ai,
+        title VARCHAR(150) NOT NULL,
+        subject VARCHAR(255) NOT NULL,
+        sender_name VARCHAR(120),
+        sender_email VARCHAR(120),
+        reply_to VARCHAR(120),
+        body_html $textType NOT NULL,
+        body_text $textType,
+        total_recipients INT DEFAULT 0,
+        sent_count INT DEFAULT 0,
+        failed_count INT DEFAULT 0,
+        status VARCHAR(30) DEFAULT 'draft',
+        provider_mode VARCHAR(40) DEFAULT 'auto_balance',
+        batch_size INT DEFAULT 50,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS recipients (
+        id $ai,
+        campaign_id INT NOT NULL,
+        email VARCHAR(120) NOT NULL,
+        name VARCHAR(120),
+        variables_json $textType,
+        status VARCHAR(30) DEFAULT 'pending',
+        provider_used VARCHAR(40),
+        message_id VARCHAR(150),
+        error_message $textType,
+        sent_at TIMESTAMP NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS email_logs (
+        id $ai,
+        campaign_id INT NULL,
+        provider VARCHAR(40) NOT NULL,
+        message_id VARCHAR(150),
+        from_address VARCHAR(150) NOT NULL,
+        from_name VARCHAR(120),
+        to_address VARCHAR(255) NOT NULL,
+        reply_to VARCHAR(150),
+        subject VARCHAR(255) NOT NULL,
+        body_html $textType,
+        body_text $textType,
+        snippet $textType,
+        status VARCHAR(30) DEFAULT 'sent',
+        error_message $textType,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS templates (
+        id $ai,
+        name VARCHAR(120) NOT NULL,
+        category VARCHAR(60) DEFAULT 'General',
+        subject VARCHAR(255) NOT NULL,
+        body_html $textType NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS settings (
+        key_name VARCHAR(80) PRIMARY KEY,
+        val $textType,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    // Default Admin User Seeding
     $st = $pdo->prepare('SELECT COUNT(*) FROM users WHERE email = ?');
     $st->execute([DEFAULT_ADMIN_EMAIL]);
     if ((int)$st->fetchColumn() === 0) {
@@ -54,7 +147,7 @@ function init_schema(PDO $pdo): void {
             ->execute([DEFAULT_ADMIN_USER, DEFAULT_ADMIN_EMAIL, $hash, 'admin', DEFAULT_REPLY_TO]);
     }
 
-    // Seed default settings
+    // Default Settings Seeding
     $defaults = [
         'sending_domain'          => SENDING_DOMAIN,
         'reply_to_email'          => DEFAULT_REPLY_TO,
@@ -68,8 +161,8 @@ function init_schema(PDO $pdo): void {
         'google_smtp_secure'      => '1',
         'google_smtp_user'        => env('SMTP_USER', ''),
         'google_smtp_pass'        => env('SMTP_PASS', ''),
-        'provider_mode'           => 'auto_balance', // auto_balance, resend_only, google_only, failover
-        'resend_ratio'            => '60',            // 60% Resend / 40% Google
+        'provider_mode'           => 'auto_balance',
+        'resend_ratio'            => '60',
         'batch_size'              => '50',
         'delay_between_emails_ms' => '150',
         'delay_between_batches_ms'=> '1200'
@@ -85,7 +178,7 @@ function init_schema(PDO $pdo): void {
         }
     }
 
-    // Seed high-converting templates if empty
+    // Seed templates if empty
     $tplCount = (int)$pdo->query('SELECT COUNT(*) FROM templates')->fetchColumn();
     if ($tplCount === 0) {
         seed_templates($pdo);
@@ -95,7 +188,7 @@ function init_schema(PDO $pdo): void {
 function seed_templates(PDO $pdo): void {
     $ins = $pdo->prepare('INSERT INTO templates (name, category, subject, body_html) VALUES (?, ?, ?, ?)');
 
-    // Template 1
+    // Template 1: Grant Allocation Award
     $ins->execute([
         'Clean Energy Grant Allocation Notice',
         'Grants & Awards',
@@ -174,7 +267,7 @@ function seed_templates(PDO $pdo): void {
 </html>'
     ]);
 
-    // Template 2
+    // Template 2: Energy Independence Award
     $ins->execute([
         'Energy Independence Reward Certificate',
         'Grants & Awards',
@@ -231,7 +324,7 @@ function seed_templates(PDO $pdo): void {
     ]);
 }
 
-// Settings Helpers
+// Settings Helpers (Compatible with both MySQL and SQLite)
 function get_setting(string $key, string $default = ''): string {
     $pdo = db();
     $st = $pdo->prepare('SELECT val FROM settings WHERE key_name = ? LIMIT 1');
@@ -242,9 +335,15 @@ function get_setting(string $key, string $default = ''): string {
 
 function set_setting(string $key, string $val): void {
     $pdo = db();
-    $st = $pdo->prepare('INSERT INTO settings (key_name, val, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(key_name) DO UPDATE SET val = excluded.val, updated_at = CURRENT_TIMESTAMP');
-    $st->execute([$key, $val]);
+    if (is_mysql()) {
+        $st = $pdo->prepare('INSERT INTO settings (key_name, val, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON DUPLICATE KEY UPDATE val = VALUES(val), updated_at = CURRENT_TIMESTAMP');
+        $st->execute([$key, $val]);
+    } else {
+        $st = $pdo->prepare('INSERT INTO settings (key_name, val, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key_name) DO UPDATE SET val = excluded.val, updated_at = CURRENT_TIMESTAMP');
+        $st->execute([$key, $val]);
+    }
 }
 
 // Security & CSRF
@@ -292,7 +391,7 @@ function current_user(): ?array {
     return $_SESSION['user_data'] ?? null;
 }
 
-// Variable Interpolation ({{name}}, {{ref_id}}, etc.)
+// Variable Interpolation
 function interpolate_tags(string $template, array $vars): string {
     return preg_replace_callback('/\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}/', function($m) use ($vars) {
         $k = $m[1];
@@ -389,7 +488,6 @@ function send_resend_email(
 
 /**
  * 2. GOOGLE WORKSPACE SMTP DISPATCHER (Pure PHP Stream Socket)
- * Supports SSL (port 465) and STARTTLS (port 587) with App Passwords and Reply-To injection.
  */
 function send_google_smtp_email(
     $to,
@@ -529,7 +627,6 @@ function send_google_smtp_email(
 
 /**
  * 3. DUAL ROUTER & INTELLIGENT LOAD BALANCER
- * Balances dispatch across Resend and Google Workspace, with automatic failover!
  */
 function send_dual_email(
     $to,
@@ -632,7 +729,7 @@ function send_dual_email(
 }
 
 /**
- * Gateway Diagnostic Verification Tests
+ * Diagnostics & Connection Tests
  */
 function test_resend_api(?string $apiKey = null): array {
     $key = $apiKey ?: get_setting('resend_api_key', env('RESEND_API_KEY', ''));

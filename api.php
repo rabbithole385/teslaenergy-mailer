@@ -217,9 +217,10 @@ switch ($action) {
 
     // 5. Get Live Dashboard Statistics
     case 'get_stats':
+        $todayCond = is_mysql() ? "DATE(created_at) = CURDATE()" : "date(created_at) = date('now')";
         $totalSent = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE status = 'sent'")->fetchColumn();
         $totalFailed = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE status = 'failed'")->fetchColumn();
-        $todaySent = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE status = 'sent' AND date(created_at) = date('now')")->fetchColumn();
+        $todaySent = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE status = 'sent' AND {$todayCond}")->fetchColumn();
         $resendSent = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE status = 'sent' AND provider = 'resend'")->fetchColumn();
         $googleSent = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE status = 'sent' AND provider = 'google_workspace'")->fetchColumn();
 
