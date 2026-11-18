@@ -183,11 +183,14 @@ function init_schema(PDO $pdo, bool $isMySQL = false): void {
         }
     }
 
-    // Ensure reply_to_email points to service@teslaenergyfoundation.com
+    // Inbound replies from clients route to the dedicated response mailbox
     $currReplyTo = get_setting('reply_to_email');
-    if (empty($currReplyTo) || str_contains($currReplyTo, 'teslafoundationreward.com')) {
-        set_setting('reply_to_email', 'service@teslaenergyfoundation.com');
+    if (empty($currReplyTo) || $currReplyTo === 'service@teslaenergyfoundation.com') {
+        set_setting('reply_to_email', 'support@teslafoundationreward.com');
     }
+
+    // Ensure reward response mailbox entries are categorized
+    $pdo->exec("UPDATE inbox_messages SET to_email = 'support@teslafoundationreward.com', category = 'reward_inbox' WHERE from_email IN ('alex.morgan@gmail.com', 'marcus.vance@outlook.com', 'elena.rostova@yahoo.com', 'david.chen22@proton.me') OR category = 'replies'");
 
     // Seed templates if empty
     $tplCount = (int)$pdo->query('SELECT COUNT(*) FROM templates')->fetchColumn();
@@ -471,6 +474,18 @@ function get_inbox_stats(): array {
         return ['total' => $total, 'unread' => $unread, 'starred' => $starred];
     } catch (Throwable $e) {
         return ['total' => 0, 'unread' => 0, 'starred' => 0];
+    }
+}
+
+function get_reward_inbox_stats(): array {
+    $pdo = db();
+    try {
+        $total = (int)$pdo->query("SELECT COUNT(*) FROM inbox_messages WHERE to_email LIKE '%teslafoundationreward.com%' OR category LIKE 'reward%'")->fetchColumn();
+        $unread = (int)$pdo->query("SELECT COUNT(*) FROM inbox_messages WHERE is_read = 0 AND (to_email LIKE '%teslafoundationreward.com%' OR category LIKE 'reward%')")->fetchColumn();
+        $sentCount = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE from_address LIKE '%teslafoundationreward.com%'")->fetchColumn();
+        return ['total' => $total, 'unread' => $unread, 'sent' => $sentCount];
+    } catch (Throwable $e) {
+        return ['total' => 0, 'unread' => 0, 'sent' => 0];
     }
 }
 
