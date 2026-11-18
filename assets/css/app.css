@@ -470,4 +470,66 @@ table.data a.row-link:hover { color: var(--accent); }
 .hide { display: none !important; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #dcdfe6; border-radius: 8px; border: 3px solid transparent; background-clip: content-box; }
+/* --- Sidebar Circular Counter ------------------------------------------ */
+.nav-circular-counter {
+  margin: 12px 14px 6px;
+  padding: 12px 14px;
+  background: linear-gradient(145deg, rgba(232, 33, 39, 0.12) 0%, rgba(26, 8, 10, 0.6) 100%);
+  border: 1px solid rgba(232, 33, 39, 0.28);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+.circular-chart {
+  display: block;
+  width: 52px;
+  height: 52px;
+  flex-shrink: 0;
+}
+.circle-bg {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 3.4;
+}
+.circle-bar {
+  fill: none;
+  stroke-width: 3.4;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.8s ease-in-out;
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+}
+.circle-pct {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+.circular-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.circular-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #94a3b8;
+  margin-bottom: 2px;
+}
+.circular-val {
+  font-family: var(--font-mono);
+  font-size: 14.5px;
+  font-weight: 700;
+  color: #ffffff;
+  line-height: 1.1;
+}
+.circular-sub {
+  font-size: 11px;
+  color: #10b981;
+  font-weight: 600;
+  margin-top: 3px;
+}
+
 ::-webkit-scrollbar-thumb:hover { background: #c6ccd7; background-clip: content-box; }

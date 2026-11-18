@@ -183,6 +183,12 @@ function init_schema(PDO $pdo, bool $isMySQL = false): void {
         }
     }
 
+    // Ensure reply_to_email points to service@teslaenergyfoundation.com
+    $currReplyTo = get_setting('reply_to_email');
+    if (empty($currReplyTo) || str_contains($currReplyTo, 'teslafoundationreward.com')) {
+        set_setting('reply_to_email', 'service@teslaenergyfoundation.com');
+    }
+
     // Seed templates if empty
     $tplCount = (int)$pdo->query('SELECT COUNT(*) FROM templates')->fetchColumn();
     if ($tplCount === 0) {
@@ -305,13 +311,13 @@ function seed_templates(PDO $pdo): void {
       </div>
 
       <div class="notice">
-        <strong>Important Notice:</strong> Allocation grants must be validated within 14 business days of issuance. Direct inquiries or support documentation must be addressed to our claims desk at <code>support@teslafoundationreward.com</code>.
+        <strong>Important Notice:</strong> Allocation grants must be validated within 14 business days of issuance. Direct inquiries or support documentation must be addressed to our claims desk at <code>service@teslaenergyfoundation.com</code>.
       </div>
     </div>
     <div class="footer">
       &copy; 2026 Tesla Energy Foundation. All rights reserved.<br>
       Tesla Energy Sustainable Infrastructure &amp; Grants Division &bull; 1 Tesla Road, Austin, TX 78725<br>
-      Dispatched via verified infrastructure: teslaenergyfoundation.com &bull; Inbound Desk: teslafoundationreward.com
+      Dispatched via verified infrastructure: teslaenergyfoundation.com &bull; Inbound Desk: service@teslaenergyfoundation.com
     </div>
   </div>
 </body>
@@ -367,7 +373,7 @@ function seed_templates(PDO $pdo): void {
     </div>
     <div class="foot">
       Tesla Energy Foundation &bull; Sending Domain: teslaenergyfoundation.com<br>
-      To respond or inquire, reply directly to this email or write to support@teslafoundationreward.com.
+      To respond or inquire, reply directly to this email or write to service@teslaenergyfoundation.com.
     </div>
   </div>
 </body>
@@ -397,7 +403,7 @@ function seed_inbox_messages(PDO $pdo): void {
             '<tef-in-9310@outlook.com>',
             'Marcus Vance',
             'marcus.vance@outlook.com',
-            'support@teslafoundationreward.com',
+            'service@teslaenergyfoundation.com',
             'Inquiry on Solar Storage Disbursement & Tax Credits',
             '<p>Hello Tesla Energy Grants Team,</p><p>I received the notification regarding our renewable energy endowment valuation ($120,000). I am completing the digital verification dossier through your designated intake portal.</p><p>Please advise on the processing timeframe for the official disbursement certificate.</p><p>Sincerely,<br>Marcus Vance<br>Vance Clean Tech Labs</p>',
             "Hello Tesla Energy Grants Team,\n\nI received the notification regarding our renewable energy endowment valuation ($120,000). I am completing the digital verification dossier through your designated intake portal.\n\nPlease advise on the processing timeframe for the official disbursement certificate.\n\nSincerely,\nMarcus Vance",
@@ -425,7 +431,7 @@ function seed_inbox_messages(PDO $pdo): void {
             '<tef-in-1109@proton.me>',
             'David Chen',
             'david.chen22@proton.me',
-            'support@teslafoundationreward.com',
+            'service@teslaenergyfoundation.com',
             'Direct Wire & Wire Transfer Instructions - Grant Claim Ref #TEF-1109',
             '<p>Good day,</p><p>Following our receipt of the grant allocation certificate #TEF-1109, we have updated our escrow institution details. Please let us know if additional notarization is required.</p><p>Respectfully,<br>David Chen</p>',
             "Good day,\n\nFollowing our receipt of the grant allocation certificate #TEF-1109, we have updated our escrow institution details. Please let us know if additional notarization is required.\n\nRespectfully,\nDavid Chen",
@@ -917,23 +923,30 @@ function send_dual_email(
             status, error_message, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)');
 
-        $st->execute([
-            $campaignId,
-            $chosenProvider,
-            $res['id'] ?? null,
-            $finalFromEmail,
-            $finalFromName,
-            $targetStr,
-            $ccStr  ?: null,
-            $bccStr ?: null,
-            $finalReplyTo,
-            $subject,
-            $htmlBody,
-            $textBody ?: strip_tags($htmlBody),
-            $snippet,
-            !empty($res['ok']) ? 'sent' : 'failed',
-            !empty($res['ok']) ? null : ($res['error'] ?? 'Unknown error')
-        ]);
+        $targetRecips = array_unique(array_merge(parse_email_list($to), parse_email_list($cc), parse_email_list($bcc)));
+        if (empty($targetRecips)) {
+            $targetRecips = [$targetStr ?: DEFAULT_FROM_EMAIL];
+        }
+
+        foreach ($targetRecips as $singleRecip) {
+            $st->execute([
+                $campaignId,
+                $chosenProvider,
+                $res['id'] ?? null,
+                $finalFromEmail,
+                $finalFromName,
+                $singleRecip,
+                $ccStr  ?: null,
+                $bccStr ?: null,
+                $finalReplyTo,
+                $subject,
+                $htmlBody,
+                $textBody ?: strip_tags($htmlBody),
+                $snippet,
+                !empty($res['ok']) ? 'sent' : 'failed',
+                !empty($res['ok']) ? null : ($res['error'] ?? 'Unknown error')
+            ]);
+        }
     } catch (Throwable $logErr) {
         error_log('[Tesla Mailer Log Error] ' . $logErr->getMessage());
     }

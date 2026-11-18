@@ -297,26 +297,45 @@ switch ($action) {
         }
         break;
 
-    // 7. Inbound Webhook (Cloudflare Email Routing / External receiver)
+    // 7. Inbound Webhook (Cloudflare / Resend / External email router)
     case 'inbound_webhook':
         $raw = file_get_contents('php://input');
         $data = json_decode($raw, true) ?: $_POST;
+        if (isset($data['data']) && is_array($data['data'])) {
+            $data = array_merge($data, $data['data']);
+        }
 
-        $from = clean($data['from'] ?? $data['sender'] ?? '', 120);
-        $fromName = clean($data['from_name'] ?? explode('@', $from)[0] ?? '', 120);
-        $to = clean($data['to'] ?? $data['recipient'] ?? DEFAULT_REPLY_TO, 120);
+        $rawFrom = (string)($data['from'] ?? $data['sender'] ?? '');
+        $fromEmail = '';
+        $fromName = clean($data['from_name'] ?? '', 120);
+
+        if (preg_match('/<([^>]+)>/', $rawFrom, $matches)) {
+            $fromEmail = trim($matches[1]);
+            if (empty($fromName)) {
+                $fromName = trim(str_replace(['"', "'"], '', explode('<', $rawFrom)[0]));
+            }
+        } else {
+            $fromEmail = trim($rawFrom);
+        }
+
+        if (empty($fromName) && $fromEmail) {
+            $fromName = ucwords(str_replace(['.', '_', '-'], ' ', explode('@', $fromEmail)[0]));
+        }
+
+        $rawTo = $data['to'] ?? $data['recipient'] ?? DEFAULT_REPLY_TO;
+        $to = clean(is_array($rawTo) ? implode(', ', $rawTo) : (string)$rawTo, 120);
         $subject = clean($data['subject'] ?? 'Inbound Reply', 255);
         $html = (string)($data['html'] ?? $data['body_html'] ?? '');
         $text = (string)($data['text'] ?? $data['body_text'] ?? strip_tags($html));
         $snippet = mb_substr(strip_tags($text ?: $html), 0, 160);
         $msgId = clean($data['message_id'] ?? ('<in-' . time() . '.' . bin2hex(random_bytes(6)) . '@' . SENDING_DOMAIN . '>'), 150);
 
-        if ($from && filter_var($from, FILTER_VALIDATE_EMAIL)) {
+        if ($fromEmail && filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) {
             $ins = $pdo->prepare('INSERT INTO inbox_messages (message_id, from_name, from_email, to_email, subject, body_html, body_text, snippet, is_read, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, "replies")');
-            $ins->execute([$msgId, $fromName, $from, $to, $subject, $html, $text, $snippet]);
-            echo json_encode(['success' => true, 'id' => (int)$pdo->lastInsertId()]);
+            $ins->execute([$msgId, $fromName ?: 'Beneficiary', $fromEmail, $to, $subject, $html, $text, $snippet]);
+            echo json_encode(['success' => true, 'id' => (int)$pdo->lastInsertId(), 'sender' => $fromEmail]);
         } else {
-            echo json_encode(['success' => false, 'error' => 'Missing sender email']);
+            echo json_encode(['success' => false, 'error' => 'Invalid or missing sender email address. Received: ' . $rawFrom]);
         }
         break;
 
