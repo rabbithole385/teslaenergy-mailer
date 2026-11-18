@@ -1,89 +1,118 @@
-# Tesla Energy Foundation — Dual Gateway Bulk Mailer (6,000 / Day)
+# Tesla Energy Foundation — Business Mailer
 
-A high-performance, Railway-ready PHP bulk mailer engineered for **teslaenergyfoundation.com**, balancing dispatches across **Resend Paid API** and **Google Workspace Paid SMTP** with automated reply routing to **teslafoundationreward.com**.
-
----
-
-## ⚡ Architecture Overview
-
-1. **Sending Domain**: `teslaenergyfoundation.com` (Cloudflare-managed DNS).
-2. **Inbound / Reply Destination**: `teslafoundationreward.com` (Injected automatically into `Reply-To` headers).
-3. **Daily Volume Target**: **6,000 emails/day**
-   * **Resend Paid API**: Handles ~4,000/day with high-speed HTTPS dispatches.
-   * **Google Workspace SMTP**: Handles ~2,000/day (staying safely inside Google's 2k daily user threshold).
-   * **Auto-Balance**: Intelligently alternates gateways and provides instant failover if either provider encounters temporary rate limits.
+High-throughput dual-gateway bulk mailer (6,000 emails/day) built in pure PHP.
+Sends to **any domain** — Gmail, Yahoo, Outlook, Hotmail, .com, .org, .net — with full **To, CC, BCC** support.
 
 ---
 
-## 🗄️ Database Architecture (Auto-Detects Railway MySQL or SQLite)
+## Architecture
 
-The mailer includes a **universal database engine** that requires **zero manual SQL imports**. All tables (`users`, `campaigns`, `recipients`, `email_logs`, `templates`, `settings`) and the default admin account are initialized automatically upon first launch.
+| Gateway | Daily Capacity | Protocol |
+|---|---|---|
+| Resend Paid API | ~4,000 / day | HTTPS (cURL) |
+| Google Workspace SMTP | ~2,000 / day | ssl://smtp.gmail.com:465 |
+| **Combined** | **~6,000 / day** | Auto-balanced + failover |
 
-You can use either:
-
-### Option A: Railway MySQL Database (Recommended)
-1. In your Railway Project, click **+ New** &rarr; **Database** &rarr; **Add MySQL**.
-2. Railway will automatically inject `MYSQLHOST`, `MYSQLPORT`, `MYSQLUSER`, `MYSQLPASSWORD`, and `MYSQLDATABASE`.
-3. The mailer automatically detects these variables, connects to MySQL, and sets up all tables instantly.
-
-### Option B: SQLite with Persistent Volume
-1. If you prefer not to create a MySQL service, the app falls back seamlessly to SQLite.
-2. In Railway, click your service &rarr; go to **Volumes** &rarr; click **Add Volume** &rarr; set Mount Path to `/data`.
+**Routing modes:** Auto-Balance (60/40 split) · Resend Only · Google Only · Failover
 
 ---
 
-## 🚀 Railway Deployment Guide
+## Deploy on Railway
 
-### Step 1: Deploy to Railway
-1. Push this folder to GitHub or deploy via Railway CLI:
-   ```bash
-   railway up
-   ```
-2. The project contains a pre-configured `Dockerfile`, `railway.json`, and `/health.php` endpoint.
+### 1. Create a Railway project
 
-### Step 2: Configure Environment Variables (Optional)
-You can set these in Railway under **Variables** (or configure them directly inside the Mailer web dashboard under **Settings**):
+Go to [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub repo** → select `teslaenergy-mailer`.
 
-| Variable | Description | Example |
-| :--- | :--- | :--- |
-| `RESEND_API_KEY` | Your Resend API Key | `re_123456789...` |
-| `SMTP_HOST` | Google Workspace SMTP Host | `smtp.gmail.com` |
-| `SMTP_PORT` | Google Workspace SMTP Port | `465` (SSL) or `587` (TLS) |
-| `SMTP_USER` | Google Workspace Account | `grants@teslaenergyfoundation.com` |
-| `SMTP_PASS` | 16-Character Google App Password | `abcd efgh ijkl mnop` |
-| `DEFAULT_REPLY_TO` | Inbound replies destination | `support@teslafoundationreward.com` |
+### 2. Add a MySQL database (optional but recommended)
 
----
+In your Railway project → **+ Add Service** → **Database** → **MySQL**.
+Railway auto-injects `MYSQLHOST`, `MYSQLDATABASE`, `MYSQLUSER`, `MYSQLPASSWORD`, `MYSQLPORT`.
+If you skip this, the app falls back to SQLite (requires a persistent `/data` volume).
 
-## ☁️ Cloudflare DNS Records (for `teslaenergyfoundation.com`)
+### 3. Add a persistent volume (for SQLite fallback)
 
-Because `teslaenergyfoundation.com` is configured strictly for **sending**, you do not need inbound MX records on this domain. Add these records in Cloudflare (**Proxy status set to DNS Only / Grey Cloud**):
+In your Railway service → **Settings** → **Volumes** → Mount path: `/data`.
 
-### 1. Combined SPF Record (TXT)
-* **Name / Host:** `@`
-* **Content:**
-  ```text
-  v=spf1 include:resend.com include:_spf.google.com ~all
-  ```
-  *(Authorizes both Resend and Google Workspace to send on behalf of teslaenergyfoundation.com).*
+### 4. Set environment variables
 
-### 2. DMARC Record (TXT)
-* **Name / Host:** `_dmarc`
-* **Content:**
-  ```text
-  v=DMARC1; p=quarantine; rua=mailto:dmarc@teslafoundationreward.com
-  ```
+In your Railway service → **Variables** → add all of these:
 
-### 3. Resend DKIM (CNAME)
-* Generated in your Resend Dashboard &rarr; Domains &rarr; `teslaenergyfoundation.com`.
-* Usually `resend._domainkey` pointing to `provided-by.resend.com`.
+```
+RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+SMTP_USER=grants@teslaenergyfoundation.com
+SMTP_PASS=xxxx xxxx xxxx xxxx
+ADMIN_EMAIL=admin@teslaenergyfoundation.com
+ADMIN_PASSWORD=YourStrongPasswordHere
+SENDING_DOMAIN=teslaenergyfoundation.com
+DEFAULT_REPLY_TO=support@teslafoundationreward.com
+```
 
-### 4. Google Workspace DKIM (TXT)
-* Generated in your Google Workspace Admin Console (Apps &rarr; Google Workspace &rarr; Gmail &rarr; Authenticate email).
-* Host: `google._domainkey`
+> `SMTP_PASS` is a **16-character Google App Password** (not your Google account password).
+> Generate it at: [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+
+### 5. Generate a public domain
+
+In your Railway service → **Settings** → **Networking** → **Generate Domain**.
+
+### 6. First login
+
+Navigate to your Railway URL. Sign in with the `ADMIN_EMAIL` and `ADMIN_PASSWORD` you set.
+Then go to **Settings & Integrations** to verify both gateways show **configured** status.
 
 ---
 
-## 🔐 Security & Access Control
+## Cloudflare DNS Records
 
-Authentication is strictly enforced for all dispatch functions, campaigns, and logs. Initial deployment accounts can be customized or configured via environment variables (`ADMIN_EMAIL`, `ADMIN_PASSWORD`), and credentials can be rotated directly within the administrative settings panel.
+Add these to `teslaenergyfoundation.com` in Cloudflare — set all to **DNS Only (grey cloud)**:
+
+| Type | Name | Value | Purpose |
+|---|---|---|---|
+| TXT | `@` | `v=spf1 include:resend.com include:_spf.google.com ~all` | SPF — authorizes both gateways |
+| TXT | `_dmarc` | `v=DMARC1; p=quarantine; rua=mailto:dmarc@teslafoundationreward.com` | DMARC |
+| CNAME | `resend._domainkey` | *(provided by Resend dashboard after domain verification)* | Resend DKIM |
+| TXT | `google._domainkey` | *(provided by Google Workspace Admin → Apps → Gmail → Authenticate email)* | Google DKIM |
+
+---
+
+## Sending Features
+
+- **To / CC / BCC** — full support in both Campaign Studio and Quick Send
+- **Merge tokens** — `{{name}}`, `{{email}}`, `{{ref_id}}`, `{{grant_amount}}`, `{{date}}`
+- **Reply-To** — always injected; all replies route to `support@teslafoundationreward.com`
+- **Batch dispatch engine** — throttled batches with live progress terminal, pause/halt controls
+- **Auto-failover** — if Resend fails mid-batch, engine auto-retries via Google SMTP (and vice versa)
+- **Audit log** — every dispatch recorded with provider, message ID, CC/BCC, timestamp
+- **Domain-agnostic** — delivers to Gmail, Yahoo, Outlook, Hotmail, iCloud, and all .com/.org/.net domains
+
+---
+
+## Getting Your Google App Password
+
+1. Go to [myaccount.google.com/security](https://myaccount.google.com/security)
+2. Enable **2-Step Verification** (required)
+3. Go to [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+4. Select app: **Mail** · Select device: **Other** → type `Tesla Mailer`
+5. Copy the 16-character password → paste into `SMTP_PASS` on Railway
+
+---
+
+## Project Structure
+
+```
+teslaenergy-mailer/
+├── index.php              # App shell — auth, all views, actions
+├── api.php                # Batch dispatch API, live tests, stats
+├── health.php             # Railway health check endpoint
+├── includes/
+│   ├── config.php         # Constants, env, session init
+│   └── functions.php      # DB, gateways, router, schema, helpers
+├── assets/
+│   └── css/app.css        # Tesla Red design system
+├── Dockerfile             # Railway-compatible PHP 8.2 + Apache
+├── docker-entrypoint.sh   # Startup script (creates /data dir)
+└── railway.json           # Railway build & deploy config
+```
+
+---
+
+*Tesla Energy Foundation · teslaenergyfoundation.com · Inbound: teslafoundationreward.com*
