@@ -68,6 +68,23 @@ switch ($action) {
             exit;
         }
 
+        $dailyLimit = (int)get_setting('daily_max_limit', '6000');
+        $todaySentSoFar = get_today_sent_count();
+
+        if ($todaySentSoFar >= $dailyLimit) {
+            echo json_encode([
+                'success'   => false,
+                'completed' => false,
+                'quota_hit' => true,
+                'error'     => "Daily dispatch limit of " . number_format($dailyLimit) . " emails reached for today ({$todaySentSoFar} sent). Sending stopped automatically to protect sender reputation.",
+                'processed' => 0,
+                'sent'      => 0,
+                'failed'    => 0,
+                'remaining' => count($recipients)
+            ]);
+            exit;
+        }
+
         $sentCount = 0;
         $failedCount = 0;
         $batchResults = [];
@@ -75,6 +92,15 @@ switch ($action) {
         $updateRecip = $pdo->prepare('UPDATE recipients SET status = ?, provider_used = ?, message_id = ?, error_message = ?, sent_at = CURRENT_TIMESTAMP WHERE id = ?');
 
         foreach ($recipients as $r) {
+            if ($todaySentSoFar + $sentCount >= $dailyLimit) {
+                $batchResults[] = [
+                    'email'    => $r['email'],
+                    'status'   => 'quota_halted',
+                    'error'    => 'Daily limit of 6,000 emails reached.'
+                ];
+                break;
+            }
+
             $vars = [];
             if (!empty($r['variables_json'])) {
                 $vars = json_decode($r['variables_json'], true) ?: [];

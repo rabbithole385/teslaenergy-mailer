@@ -167,6 +167,7 @@ function init_schema(PDO $pdo, bool $isMySQL = false): void {
         'google_smtp_pass'        => env('SMTP_PASS', ''),
         'provider_mode'           => 'auto_balance',
         'resend_ratio'            => '60',
+        'daily_max_limit'         => '6000',
         'batch_size'              => '50',
         'delay_between_emails_ms' => '150',
         'delay_between_batches_ms'=> '1200'
@@ -807,9 +808,20 @@ function send_google_smtp_email(
     }
 }
 
+function get_today_sent_count(): int {
+    $pdo = db();
+    $todayCond = is_mysql() ? "DATE(created_at) = CURDATE()" : "date(created_at) = date('now')";
+    return (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE status = 'sent' AND {$todayCond}")->fetchColumn();
+}
+
+function is_daily_quota_reached(int $limit = 6000): bool {
+    return get_today_sent_count() >= $limit;
+}
+
 /**
  * 3. DUAL ROUTER & INTELLIGENT LOAD BALANCER
  *    Full CC, BCC, and unrestricted domain delivery (Gmail, Yahoo, Outlook, .com, etc.)
+ *    Automatic 6,000/day hard limit protection.
  */
 function send_dual_email(
     $to,
@@ -824,6 +836,18 @@ function send_dual_email(
     $cc = '',
     $bcc = ''
 ): array {
+    // 6k Daily Limit Enforcement Check
+    $dailyLimit = (int)get_setting('daily_max_limit', '6000');
+    if (get_today_sent_count() >= $dailyLimit) {
+        return [
+            'ok'        => false,
+            'id'        => null,
+            'error'     => "Daily sending quota of " . number_format($dailyLimit) . " emails reached. Sending stopped automatically until tomorrow to preserve domain reputation.",
+            'provider'  => 'daily_quota_limit',
+            'quota_hit' => true
+        ];
+    }
+
     static $balanceCounter = 0;
     $balanceCounter++;
 

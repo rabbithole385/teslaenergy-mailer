@@ -139,17 +139,26 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
         $to = clean($_POST['to'] ?? '', 120);
         $cc = clean($_POST['cc'] ?? '', 500);
         $bcc = clean($_POST['bcc'] ?? '', 500);
-        $subject = clean($_POST['subject'] ?? '', 200) ?: ('Quick Test Dispatch â€” ' . date('H:i:s'));
+        $subject = clean($_POST['subject'] ?? '', 200) ?: ('Quick Test Dispatch — ' . date('H:i:s'));
         $bodyHtml = (string)($_POST['html'] ?? '');
         $provider = clean($_POST['provider'] ?? 'auto_balance', 40);
 
-        if (!$to || !filter_var($to, FILTER_VALIDATE_EMAIL)) {
-            flash('error', 'Please specify a valid recipient address.');
+        $validTo  = parse_email_list($to);
+        $validCC  = parse_email_list($cc);
+        $validBCC = parse_email_list($bcc);
+        $allTargets = array_merge($validTo, $validCC, $validBCC);
+
+        if (empty($allTargets)) {
+            flash('error', 'Please specify at least one recipient address (To, CC, or BCC).');
+        } elseif (is_daily_quota_reached()) {
+            flash('error', 'Daily sending limit of 6,000 emails reached (' . number_format(get_today_sent_count()) . ' / 6,000). Sending has been halted automatically until tomorrow to preserve domain reputation.');
         } else {
-            $content = $bodyHtml ?: '<div style="font-family:Arial,sans-serif;padding:24px;border:1px solid #e2e8f0;border-radius:8px;"><h2>Tesla Energy Foundation</h2><p>This is a live test dispatch from your dual-gateway mailer.</p><p><strong>Reply-To Target:</strong> ' . htmlspecialchars(get_setting('reply_to_email', DEFAULT_REPLY_TO)) . '</p></div>';
-            $res = send_dual_email($to, $subject, $content, strip_tags($content), '', '', '', $provider, null, $cc, $bcc);
+            $targetTo = !empty($validTo) ? $validTo[0] : (!empty($validCC) ? $validCC[0] : (!empty($validBCC) ? $validBCC[0] : DEFAULT_FROM_EMAIL));
+            $content = $bodyHtml ?: '<div style="font-family:Arial,sans-serif;padding:24px;border:1px solid #e2e8f0;border-radius:8px;"><h2>Tesla Energy Foundation</h2><p>This is an executive dispatch from your Tesla Energy mailer.</p><p><strong>Reply-To Target:</strong> ' . htmlspecialchars(get_setting('reply_to_email', DEFAULT_REPLY_TO)) . '</p></div>';
+            $res = send_dual_email($targetTo, $subject, $content, strip_tags($content), '', '', '', $provider, null, $cc, $bcc);
             if (!empty($res['ok'])) {
-                flash('success', "Dispatched to {$to} via {$res['provider']}! (ID: {$res['id']})");
+                $destSummary = !empty($to) ? $to : ('Batch (' . count($allTargets) . ' destination' . (count($allTargets) > 1 ? 's' : '') . ')');
+                flash('success', "Dispatched to {$destSummary} successfully! (ID: {$res['id']})");
             } else {
                 flash('error', "Delivery failed: " . ($res['error'] ?: 'Check SMTP and Resend settings.'));
             }
@@ -288,16 +297,16 @@ if ($authed) {
     $templates = $pdo->query('SELECT * FROM templates ORDER BY id ASC')->fetchAll();
     $campaigns = $pdo->query('SELECT * FROM campaigns ORDER BY id DESC LIMIT 50')->fetchAll();
 
-    if ($view === 'outbox') {
+    if ($view === 'outbox' || $view === 'sent') {
         $emailLogs = $pdo->query('SELECT * FROM email_logs ORDER BY id DESC LIMIT 150')->fetchAll();
     }
 
-    if ($view === 'inbox') {
-        $filter = clean($_GET['filter'] ?? 'all');
+    if ($view === 'inbox' || $view === 'replies') {
+        $filter = clean($_GET['filter'] ?? ($view === 'replies' ? 'replies' : 'all'));
         if ($filter === 'unread') {
             $inboxMessages = $pdo->query('SELECT * FROM inbox_messages WHERE is_read = 0 ORDER BY id DESC')->fetchAll();
         } elseif ($filter === 'replies') {
-            $inboxMessages = $pdo->query("SELECT * FROM inbox_messages WHERE category = 'replies' ORDER BY id DESC")->fetchAll();
+            $inboxMessages = $pdo->query("SELECT * FROM inbox_messages WHERE category = 'replies' OR subject LIKE 'Re:%' ORDER BY id DESC")->fetchAll();
         } elseif ($filter === 'grants') {
             $inboxMessages = $pdo->query("SELECT * FROM inbox_messages WHERE category = 'grants' ORDER BY id DESC")->fetchAll();
         } else {
@@ -415,29 +424,55 @@ $googleConfigured = !empty($googleUser);
     </div>
 
     <nav class="nav">
-      <div class="nav-group-label">Workspace</div>
-      <a class="nav-item <?= $view === 'overview' ? 'active' : '' ?>" href="?view=overview">
-        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>
-        </svg>
-        <span>Overview</span>
-      </a>
+      <div class="nav-group-label">Mailbox</div>
       <a class="nav-item <?= $view === 'inbox' ? 'active' : '' ?>" href="?view=inbox">
         <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/>
           <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>
         </svg>
-        <span>Inbox &amp; Replies</span>
+        <span>Inbox</span>
         <?php if (!empty($inboxStats['unread'])): ?><span class="count"><?= $inboxStats['unread'] ?></span><?php endif; ?>
       </a>
-      <a class="nav-item <?= $view === 'compose' ? 'active' : '' ?>" href="?view=compose">
+
+      <a class="nav-item <?= ($view === 'sent' || $view === 'outbox') ? 'active' : '' ?>" href="?view=sent">
         <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="2.5" y="4.5" width="19" height="15" rx="2.5"/><path d="m3 6.5 8 6a2 2 0 0 0 2 0l8-6"/>
+          <line x1="22" y1="2" x2="11" y2="13"></line>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
         </svg>
-        <span>Quick Send</span>
+        <span>Sent Mail</span>
+        <?php if (!empty($stats['totalSent'])): ?><span class="badge badge-mono small" style="margin-left:auto;"><?= number_format($stats['totalSent']) ?></span><?php endif; ?>
       </a>
 
-      <div class="nav-group-label">Audience</div>
+      <a class="nav-item <?= $view === 'replies' ? 'active' : '' ?>" href="?view=replies">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="9 17 4 12 9 7"/>
+          <path d="M20 18v-2a4 4 0 0 0-4-4H4"/>
+        </svg>
+        <span>Replies</span>
+        <?php if (!empty($inboxStats['total'])): ?><span class="badge badge-mono small" style="margin-left:auto;"><?= number_format($inboxStats['total']) ?></span><?php endif; ?>
+      </a>
+
+      <a class="nav-item <?= $view === 'compose' ? 'active' : '' ?>" href="?view=compose">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+        </svg>
+        <span>Compose / Send</span>
+      </a>
+
+      <div class="nav-group-label">Dispatch &amp; Campaigns</div>
+      <a class="nav-item <?= $view === 'overview' ? 'active' : '' ?>" href="?view=overview">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>
+        </svg>
+        <span>Overview &amp; Metrics</span>
+      </a>
+      <a class="nav-item <?= $view === 'campaigns' ? 'active' : '' ?>" href="?view=campaigns">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21.5 2.5 10.5 13.5"/><path d="M21.5 2.5 14.5 21l-4-7.5-7.5-4 18.5-7Z"/>
+        </svg>
+        <span>Campaign Studio (6k)</span>
+        <?php if ($stats['todaySent']): ?><span class="count"><?= $stats['todaySent'] ?></span><?php endif; ?>
+      </a>
       <a class="nav-item <?= $view === 'recipients' ? 'active' : '' ?>" href="?view=recipients">
         <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M16 20v-1.5a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4V20"/><circle cx="9.5" cy="7.5" r="3.5"/><path d="M21 20v-1.5a4 4 0 0 0-3-3.87"/><path d="M16.5 4.1a3.5 3.5 0 0 1 0 6.8"/>
@@ -445,27 +480,12 @@ $googleConfigured = !empty($googleUser);
         <span>Recipients &amp; Leads</span>
       </a>
 
-      <div class="nav-group-label">Marketing &amp; 6k Dispatch</div>
-      <a class="nav-item <?= $view === 'campaigns' ? 'active' : '' ?>" href="?view=campaigns">
-        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21.5 2.5 10.5 13.5"/><path d="M21.5 2.5 14.5 21l-4-7.5-7.5-4 18.5-7Z"/>
-        </svg>
-        <span>Campaign Studio</span>
-        <?php if ($stats['todaySent']): ?><span class="count"><?= $stats['todaySent'] ?></span><?php endif; ?>
-      </a>
-      <a class="nav-item <?= $view === 'outbox' ? 'active' : '' ?>" href="?view=outbox">
-        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 3v18h18"/><path d="M7 15l3.5-4 3 2.5L20 7"/>
-        </svg>
-        <span>Outbox &amp; Logs</span>
-      </a>
-
       <div class="nav-group-label">System</div>
       <a class="nav-item <?= $view === 'settings' ? 'active' : '' ?>" href="?view=settings">
         <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-2.87 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 3 15a1.7 1.7 0 0 0-1.55-1H1.3a2 2 0 1 1 0-4h.15A1.7 1.7 0 0 0 3 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 7 4.6a1.7 1.7 0 0 0 1-1.55V2.9a2 2 0 1 1 4 0v.15A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9v.1a1.7 1.7 0 0 0 1.55 1h.15a2 2 0 1 1 0 4h-.15a1.7 1.7 0 0 0-1.55 1Z"/>
         </svg>
-        <span>Settings &amp; Integrations</span>
+        <span>Settings &amp; Gateways</span>
       </a>
       <a class="nav-item <?= $view === 'dns' ? 'active' : '' ?>" href="?view=dns">
         <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -474,6 +494,21 @@ $googleConfigured = !empty($googleUser);
         <span>Cloudflare DNS</span>
       </a>
     </nav>
+
+    <!-- SIDEBAR MAIL COUNTER METER -->
+    <div class="sidebar-meter-box">
+      <div class="row between small">
+        <span style="color:#94a3b8; font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:0.5px;">Mail Capacity</span>
+        <strong class="mono" style="color:#ffffff; font-size:11.5px;"><?= number_format($stats['todaySent']) ?> / 6,000</strong>
+      </div>
+      <div class="sidebar-meter-bar">
+        <i style="width:<?= min(100, max(6, round(($stats['todaySent'] / 6000) * 100))) ?>%;"></i>
+      </div>
+      <div class="row between small" style="color:#64748b; font-size:10.5px;">
+        <span><?= round(($stats['todaySent'] / 6000) * 100) ?>% Dispatched</span>
+        <span style="color:#10b981; font-weight:600;">Gateways Active</span>
+      </div>
+    </div>
 
     <div class="sidebar-foot">
       <div class="user-chip">
@@ -497,12 +532,14 @@ $googleConfigured = !empty($googleUser);
           <?php
             $titles = [
               'overview'   => 'Overview &amp; Metrics',
-              'inbox'      => 'Inbox &amp; Inquiries',
-              'campaigns'  => 'Campaign Studio',
-              'compose'    => 'Quick Send',
+              'inbox'      => 'Inbox &amp; Messages',
+              'sent'       => 'Sent Mail',
+              'replies'    => 'Inbound Customer Replies',
+              'compose'    => 'Compose / Quick Send',
+              'campaigns'  => 'Campaign Studio (6k Bulk)',
               'recipients' => 'Audience &amp; Recipients',
               'outbox'     => 'Outbox &amp; Logs',
-              'settings'   => 'Settings &amp; Integrations',
+              'settings'   => 'Settings &amp; Gateways',
               'dns'        => 'Cloudflare DNS Records'
             ];
             echo $titles[$view] ?? 'Tesla Energy Mailer';
@@ -517,15 +554,43 @@ $googleConfigured = !empty($googleUser);
       <div class="topbar-spacer"></div>
 
       <div class="topbar-actions">
-        <a class="btn btn-sm btn-primary" href="?view=campaigns&new=1">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v16M4 12h16"/></svg>
-          New Campaign
+        <a class="btn btn-sm btn-primary" href="?view=compose">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:14px; height:14px; margin-right:4px;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          Compose
         </a>
-        <a class="btn btn-sm" href="?view=compose">
-          Quick Send
+        <a class="btn btn-sm" href="?view=campaigns&new=1">
+          + 6k Campaign
         </a>
       </div>
     </header>
+
+    <!-- GLOBAL MAIL COUNTER BAR STRIP -->
+    <div class="mail-counter-strip">
+      <div class="counter-item">
+        <span class="dot green"></span>
+        <span class="lbl">Mail Capacity:</span>
+        <strong class="val"><?= number_format($stats['todaySent']) ?></strong>
+        <span class="sub">/ 6,000 daily limit</span>
+      </div>
+      <div class="counter-bar-wrap">
+        <div class="counter-progress-bar">
+          <i style="width:<?= min(100, max(5, round(($stats['todaySent'] / 6000) * 100))) ?>%;"></i>
+        </div>
+      </div>
+      <div class="counter-item">
+        <span class="dot red"></span>
+        <span class="lbl">Inbox Unread:</span>
+        <strong class="val" style="color:var(--accent);"><?= number_format($inboxStats['unread']) ?></strong>
+      </div>
+      <div class="counter-item">
+        <span class="lbl">Total Inbound:</span>
+        <strong class="val"><?= number_format($inboxStats['total']) ?></strong>
+      </div>
+      <div class="counter-item hide-mobile">
+        <span class="lbl">All-time Delivered:</span>
+        <strong class="val text-green"><?= number_format($stats['totalSent']) ?></strong>
+      </div>
+    </div>
 
     <div class="content">
       <?php if ($flash): ?>
@@ -726,14 +791,14 @@ $googleConfigured = !empty($googleUser);
         </div>
       </div>
 
-      <?php elseif ($view === 'inbox'): ?>
+      <?php elseif ($view === 'inbox' || $view === 'replies'): ?>
       <!-- ==============================================
            VIEW: INBOX & INQUIRIES (WITH MESSAGE COUNTER BAR)
            ============================================== -->
       <div class="page-head">
         <div class="titles">
-          <h1>Inbox &amp; Inquiries</h1>
-          <p class="sub">Inbound beneficiary responses and queries routed via <strong class="mono"><?= e(get_setting('reply_to_email', DEFAULT_REPLY_TO)) ?></strong>.</p>
+          <h1><?= $view === 'replies' ? 'Beneficiary Replies' : 'Inbox &amp; Inquiries' ?></h1>
+          <p class="sub"><?= $view === 'replies' ? 'Direct inbound replies from grant recipients routed via' : 'Inbound beneficiary responses and queries routed via' ?> <strong class="mono"><?= e(get_setting('reply_to_email', DEFAULT_REPLY_TO)) ?></strong>.</p>
         </div>
         <div class="row" style="gap:8px;">
           <a class="btn btn-sm" href="?view=inbox&action=mark_all_read">
@@ -919,6 +984,18 @@ $googleConfigured = !empty($googleUser);
         </div>
       </div>
 
+      <?php if (is_daily_quota_reached()): ?>
+      <div class="card mb-3" style="border: 2px solid #ef4444; background: rgba(239, 68, 68, 0.1);">
+        <div class="card-body" style="display:flex; align-items:center; gap:16px;">
+          <span style="font-size:2rem;">🛑</span>
+          <div>
+            <h3 style="margin:0 0 4px 0; color:#ef4444;">Daily Sending Cap Reached (6,000 / 6,000)</h3>
+            <p style="margin:0; font-size:13px; color:var(--text-muted);">Today's volume quota of 6,000 sent emails has been reached. Outbound bulk dispatch is locked until tomorrow 00:00 UTC to maintain domain health and sender reputation.</p>
+          </div>
+        </div>
+      </div>
+      <?php endif; ?>
+
       <!-- Live Dispatch Queue Box (Shown if a campaign is actively launched) -->
       <div id="queue-box" class="card mb-3 <?= isset($_GET['launch_id']) ? '' : 'hide' ?>" style="border:2px solid var(--accent);">
         <div class="card-head" style="background:var(--surface-2);">
@@ -1002,7 +1079,7 @@ $googleConfigured = !empty($googleUser);
               <div class="card-body">
                 <div class="field">
                   <label for="recipients">Paste recipient emails (one per line, supports CSV: <span class="mono">email,name,ref_id,grant_amount</span>)</label>
-                  <textarea class="textarea mono" id="recipients" name="recipients" rows="8" required oninput="updateRecipientCount()" placeholder="john.doe@example.com&#10;sarah.connor@gmail.com,Sarah Connor,TEF-8921,$75,000"></textarea>
+                  <textarea class="textarea mono" id="recipients" name="recipients" rows="8" oninput="updateRecipientCount()" placeholder="john.doe@example.com&#10;sarah.connor@gmail.com,Sarah Connor,TEF-8921,$75,000"></textarea>
                   <div class="hint" id="recipient-count-label">0 recipient addresses loaded &bull; Duplicates automatically filtered</div>
                 </div>
               </div>
@@ -1104,6 +1181,18 @@ $googleConfigured = !empty($googleUser);
         </div>
       </div>
 
+      <?php if (is_daily_quota_reached()): ?>
+      <div class="card mb-3" style="border: 2px solid #ef4444; background: rgba(239, 68, 68, 0.1); max-width:760px;">
+        <div class="card-body" style="display:flex; align-items:center; gap:16px;">
+          <span style="font-size:2rem;">🛑</span>
+          <div>
+            <h3 style="margin:0 0 4px 0; color:#ef4444;">Daily Sending Limit Reached (6,000 / 6,000)</h3>
+            <p style="margin:0; font-size:13px; color:var(--text-muted);">Today's volume quota of 6,000 sent emails has been reached. Dispatches are paused until tomorrow to preserve domain reputation.</p>
+          </div>
+        </div>
+      </div>
+      <?php endif; ?>
+
       <div class="card" style="max-width:760px;">
         <div class="card-head"><h2>Direct Dispatch</h2></div>
         <form method="post" action="<?= $self ?>" class="card-body">
@@ -1112,8 +1201,8 @@ $googleConfigured = !empty($googleUser);
 
           <div class="row-2">
             <div class="field">
-              <label for="q_to">Recipient email (To)</label>
-              <input class="input" id="q_to" name="to" type="email" required placeholder="recipient@gmail.com" value="<?= e($_GET['to'] ?? '') ?>">
+              <label for="q_to">Recipient email (To) <span class="muted small">(optional if CC or BCC provided)</span></label>
+              <input class="input" id="q_to" name="to" type="email" placeholder="recipient@gmail.com (or leave blank if using CC/BCC)" value="<?= e($_GET['to'] ?? '') ?>">
             </div>
             <div class="field">
               <label for="q_provider">Gateway</label>
@@ -1177,14 +1266,14 @@ $googleConfigured = !empty($googleUser);
         </div>
       </div>
 
-      <?php elseif ($view === 'outbox'): ?>
+      <?php elseif ($view === 'outbox' || $view === 'sent'): ?>
       <!-- ==============================================
-           VIEW: OUTBOX & AUDIT LOGS
+           VIEW: SENT MAIL & OUTBOX LOGS
            ============================================== -->
       <div class="page-head">
         <div class="titles">
-          <h1>Outbox &amp; Logs</h1>
-          <p class="sub">Complete historical record of dispatched messages with provider reference IDs.</p>
+          <h1><?= $view === 'sent' ? 'Sent Mail' : 'Outbox &amp; Logs' ?></h1>
+          <p class="sub"><?= $view === 'sent' ? 'All successfully dispatched outgoing messages with verified delivery confirmation IDs.' : 'Complete historical record of dispatched messages with provider reference IDs.' ?></p>
         </div>
         <div class="row">
           <form method="post" action="<?= $self ?>" onsubmit="return confirm('Clear all audit logs?');">
