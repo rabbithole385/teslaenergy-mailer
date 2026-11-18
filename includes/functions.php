@@ -1,6 +1,6 @@
-<?php
+﻿<?php
 /**
- * Tesla Energy Foundation Mailer — Core Engine Functions
+ * Tesla Energy Foundation Mailer â€” Core Engine Functions
  * Dual Gateway Dispatcher (Resend Paid API + Google Workspace SMTP)
  * Universal Database Support: Railway MySQL + SQLite Auto-Switch
  */
@@ -163,7 +163,7 @@ function init_schema(PDO $pdo, bool $isMySQL = false): void {
         'google_smtp_host'        => env('SMTP_HOST', 'smtp.gmail.com'),
         'google_smtp_port'        => env('SMTP_PORT', '465'),
         'google_smtp_secure'      => '1',
-        'google_smtp_user'        => env('SMTP_USER', ''),
+        'google_smtp_user'        => env('SMTP_USER', 'service@teslaenergyfoundation.com'),
         'google_smtp_pass'        => env('SMTP_PASS', ''),
         'provider_mode'           => 'auto_balance',
         'resend_ratio'            => '60',
@@ -188,7 +188,7 @@ function init_schema(PDO $pdo, bool $isMySQL = false): void {
         seed_templates($pdo);
     }
 
-    // Live schema migrations — add cc/bcc columns if upgrading from older install
+    // Live schema migrations â€” add cc/bcc columns if upgrading from older install
     $migrationCols = [
         'campaigns'  => ['cc_address', 'bcc_address'],
         'email_logs' => ['cc_address', 'bcc_address'],
@@ -299,7 +299,7 @@ function seed_templates(PDO $pdo): void {
     $ins->execute([
         'Energy Independence Reward Certificate',
         'Grants & Awards',
-        'CONFIRMATION: Tesla Foundation Energy Independence Award Allocation — Cert #{{ref_id}}',
+        'CONFIRMATION: Tesla Foundation Energy Independence Award Allocation â€” Cert #{{ref_id}}',
         '<!DOCTYPE html>
 <html>
 <head>
@@ -455,7 +455,7 @@ function parse_email_list($input): array {
 
 /**
  * 1. RESEND DISPATCHER (HTTPS cURL API)
- *    Supports To, CC, BCC — delivers to Gmail, Yahoo, Outlook, .com and all domains.
+ *    Supports To, CC, BCC â€” delivers to Gmail, Yahoo, Outlook, .com and all domains.
  */
 function send_resend_email(
     $to,
@@ -535,7 +535,7 @@ function send_resend_email(
 
 /**
  * 2. GOOGLE WORKSPACE SMTP DISPATCHER (Pure PHP Stream Socket)
- *    Supports To, CC, BCC — delivers to Gmail, Yahoo, Outlook, .com and all domains.
+ *    Supports To, CC, BCC â€” delivers to Gmail, Yahoo, Outlook, .com and all domains.
  */
 function send_google_smtp_email(
     $to,
@@ -550,7 +550,7 @@ function send_google_smtp_email(
 ): array {
     $host = get_setting('google_smtp_host', env('SMTP_HOST', 'smtp.gmail.com'));
     $port = (int)get_setting('google_smtp_port', env('SMTP_PORT', '465'));
-    $user = trim(get_setting('google_smtp_user', env('SMTP_USER', '')));
+    $user = trim(get_setting('google_smtp_user', env('SMTP_USER', 'service@teslaenergyfoundation.com')));
     $pass = trim(str_replace(' ', '', get_setting('google_smtp_pass', env('SMTP_PASS', ''))));
 
     if (empty($user) || empty($pass)) {
@@ -812,7 +812,7 @@ function test_resend_api(?string $apiKey = null): array {
 function test_google_smtp(?string $host = null, ?int $port = null, ?string $user = null, ?string $pass = null): array {
     $host = $host ?: get_setting('google_smtp_host', env('SMTP_HOST', 'smtp.gmail.com'));
     $port = $port ?: (int)get_setting('google_smtp_port', env('SMTP_PORT', '465'));
-    $user = trim($user ?: get_setting('google_smtp_user', env('SMTP_USER', '')));
+    $user = trim($user ?: get_setting('google_smtp_user', env('SMTP_USER', 'service@teslaenergyfoundation.com')));
     $pass = trim(str_replace(' ', '', $pass ?: get_setting('google_smtp_pass', env('SMTP_PASS', ''))));
 
     if (empty($user) || empty($pass)) {

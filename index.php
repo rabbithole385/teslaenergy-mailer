@@ -1,6 +1,6 @@
-<?php
+﻿<?php
 /**
- * Tesla Energy Foundation — Business Mail & High-Throughput Bulk Dispatcher (6k/day)
+ * Tesla Energy Foundation â€” Business Mail & High-Throughput Bulk Dispatcher (6k/day)
  * Architecture inspired by OakView Mail & Mailview design system
  */
 
@@ -139,7 +139,7 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
         $to = clean($_POST['to'] ?? '', 120);
         $cc = clean($_POST['cc'] ?? '', 500);
         $bcc = clean($_POST['bcc'] ?? '', 500);
-        $subject = clean($_POST['subject'] ?? '', 200) ?: ('Quick Test Dispatch — ' . date('H:i:s'));
+        $subject = clean($_POST['subject'] ?? '', 200) ?: ('Quick Test Dispatch â€” ' . date('H:i:s'));
         $bodyHtml = (string)($_POST['html'] ?? '');
         $provider = clean($_POST['provider'] ?? 'auto_balance', 40);
 
@@ -326,7 +326,7 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
 
         <div class="field">
           <label for="pwd">Access password</label>
-          <input class="input" id="pwd" type="password" name="password" required placeholder="••••••••••••" autocomplete="current-password">
+          <input class="input" id="pwd" type="password" name="password" required placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢" autocomplete="current-password">
         </div>
 
         <button type="submit" class="btn btn-primary btn-block btn-lg" style="margin-top:18px;">
@@ -490,15 +490,15 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
         </div>
 
         <div class="card stat">
-          <div class="label">Resend Paid API</div>
+          <div class="label">Primary Gateway</div>
           <div class="value mono"><?= number_format($stats['resendSent']) ?></div>
           <div class="delta">&bull; ~4,000/day allocation</div>
         </div>
 
         <div class="card stat">
-          <div class="label">Google Workspace SMTP</div>
+          <div class="label">Secondary Gateway</div>
           <div class="value mono"><?= number_format($stats['googleSent']) ?></div>
-          <div class="delta">&bull; ~2,000/day user cap</div>
+          <div class="delta">&bull; ~2,000/day allocation</div>
         </div>
       </div>
 
@@ -513,7 +513,7 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
           <div class="card-body">
             <div class="row between" style="padding:10px 0;border-bottom:1px solid var(--line-soft);">
               <div>
-                <div style="font-weight:600;color:var(--ink);">Resend Paid API</div>
+                <div style="font-weight:600;color:var(--ink);">Primary Delivery Gateway</div>
                 <div class="small muted">High-speed HTTPS campaign delivery</div>
               </div>
               <span class="badge <?= $resendConfigured ? 'badge-green' : 'badge-amber' ?>">
@@ -523,8 +523,8 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
 
             <div class="row between" style="padding:10px 0;border-bottom:1px solid var(--line-soft);">
               <div>
-                <div style="font-weight:600;color:var(--ink);">Google Workspace SMTP</div>
-                <div class="small muted">smtp.gmail.com:465 (SSL) &bull; <?= e(get_setting('google_smtp_user') ?: 'not configured') ?></div>
+                <div style="font-weight:600;color:var(--ink);">Secondary Delivery Gateway</div>
+                <div class="small muted">SMTP fallback &bull; <?= e(get_setting('google_smtp_user') ?: 'not configured') ?></div>
               </div>
               <span class="badge <?= $googleConfigured ? 'badge-green' : 'badge-amber' ?>">
                 <span class="badge-dot"></span><?= $googleConfigured ? 'ready' : 'not set' ?>
@@ -729,7 +729,7 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
                 <h2>Email Content</h2>
                 <div class="spacer"></div>
                 <select class="select" id="templatePicker" style="max-width:240px;" onchange="loadTemplate(this.value)">
-                  <option value="">— Load pre-built template —</option>
+                  <option value="">â€” Load pre-built template â€”</option>
                   <?php foreach ($templates as $t): ?>
                     <option value="<?= $t['id'] ?>"><?= e($t['name']) ?></option>
                   <?php endforeach; ?>
@@ -916,7 +916,6 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
             <thead>
               <tr>
                 <th>Status</th>
-                <th>Gateway</th>
                 <th>To</th>
                 <th>CC / BCC</th>
                 <th>Subject</th>
@@ -926,24 +925,23 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
             </thead>
             <tbody>
               <?php if (empty($emailLogs)): ?>
-                <tr><td colspan="7" class="empty">No emails logged in outbox yet.</td></tr>
+                <tr><td colspan="6" class="empty">No emails logged in outbox yet.</td></tr>
               <?php else: foreach ($emailLogs as $log): ?>
                 <tr>
                   <td>
                     <span class="badge <?= $log['status'] === 'sent' ? 'badge-green' : 'badge-red' ?>">
-                      <span class="badge-dot"></span><?= e($log['status']) ?>
+                      <span class="badge-dot"></span><?= $log['status'] === 'sent' ? 'delivered' : 'failed' ?>
                     </span>
                   </td>
-                  <td><span class="badge badge-mono"><?= e($log['provider']) ?></span></td>
                   <td><strong><?= e($log['to_address']) ?></strong></td>
                   <td class="small muted"><?php
                     $ccbcc = [];
                     if (!empty($log['cc_address']))  $ccbcc[] = 'CC: ' . $log['cc_address'];
                     if (!empty($log['bcc_address'])) $ccbcc[] = 'BCC: ' . $log['bcc_address'];
-                    echo $ccbcc ? e(implode(' | ', $ccbcc)) : '—';
+                    echo $ccbcc ? e(implode(' | ', $ccbcc)) : 'â€”';
                   ?></td>
                   <td class="small muted truncate" style="max-width:280px;"><?= e($log['subject']) ?></td>
-                  <td class="num small muted"><?= e($log['message_id'] ?: '—') ?></td>
+                  <td class="num small muted"><?= e($log['message_id'] ?: 'â€”') ?></td>
                   <td class="small muted"><?= date('M j, H:i:s', strtotime($log['created_at'])) ?></td>
                 </tr>
               <?php endforeach; endif; ?>
@@ -975,7 +973,7 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
             <div class="row between" style="padding:9px 0;border-bottom:1px solid var(--line-soft);">
               <div>
                 <div style="font-weight:600;color:var(--ink);">Campaign delivery</div>
-                <div class="small muted">Resend Paid API</div>
+                <div class="small muted">Primary Gateway</div>
               </div>
               <span class="badge <?= $resendConfigured ? 'badge-green' : 'badge-amber' ?>">
                 <span class="badge-dot"></span><?= $resendConfigured ? 'configured' : 'not set' ?>
@@ -985,7 +983,7 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
             <div class="row between" style="padding:9px 0;">
               <div>
                 <div style="font-weight:600;color:var(--ink);">Mailbox &amp; SMTP</div>
-                <div class="small muted">Google Workspace &middot; <span class="mono"><?= e(get_setting('google_smtp_user') ?: 'not set') ?></span></div>
+                <div class="small muted">Secondary Gateway &middot; <span class="mono"><?= e(get_setting('google_smtp_user') ?: 'not set') ?></span></div>
               </div>
               <span class="badge <?= $googleConfigured ? 'badge-green' : 'badge-amber' ?>">
                 <span class="badge-dot"></span><?= $googleConfigured ? 'configured' : 'not set' ?>
@@ -1101,11 +1099,11 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
               <div class="row-2">
                 <div class="field">
                   <label for="g_user">Workspace Account Email</label>
-                  <input class="input mono" id="g_user" name="google_smtp_user" value="<?= e(get_setting('google_smtp_user', '')) ?>" placeholder="grants@teslaenergyfoundation.com">
+                  <input class="input mono" id="g_user" name="google_smtp_user" value="<?= e(get_setting('google_smtp_user', '')) ?>" placeholder="service@teslaenergyfoundation.com">
                 </div>
                 <div class="field">
                   <label for="g_pass">16-Character App Password</label>
-                  <input class="input mono" id="g_pass" type="password" name="google_smtp_pass" placeholder="<?= get_setting('google_smtp_pass') ? '••••••••••••••••' : 'Enter App Password' ?>">
+                  <input class="input mono" id="g_pass" type="password" name="google_smtp_pass" placeholder="<?= get_setting('google_smtp_pass') ? 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢' : 'Enter App Password' ?>">
                 </div>
               </div>
             </div>
@@ -1291,7 +1289,7 @@ function updateRecipientCount() {
   const lines = val ? val.split(/\r?\n/).filter(x => x.trim().length > 0) : [];
   const lbl = document.getElementById('recipient-count-label');
   if (lbl) {
-    lbl.innerText = lines.length + ' recipient addresses loaded • Duplicates automatically filtered';
+    lbl.innerText = lines.length + ' recipient addresses loaded â€¢ Duplicates automatically filtered';
   }
 }
 
@@ -1323,14 +1321,14 @@ async function runLiveCheck(provider) {
     const data = await res.json();
     if (data.ok) {
       resEl.className = 'small mt-2' + ' text-green';
-      resEl.innerText = '✓ ' + (data.message || 'Connected successfully!');
+      resEl.innerText = 'âœ“ ' + (data.message || 'Connected successfully!');
     } else {
       resEl.className = 'small mt-2' + ' text-red';
-      resEl.innerText = '✗ ' + (data.error || 'Connection failed.');
+      resEl.innerText = 'âœ— ' + (data.error || 'Connection failed.');
     }
   } catch (e) {
     resEl.className = 'small mt-2 text-red';
-    resEl.innerText = '✗ Network error: ' + e.message;
+    resEl.innerText = 'âœ— Network error: ' + e.message;
   }
 }
 
@@ -1399,15 +1397,15 @@ async function runBatchQueue(campId) {
       if (data.results) {
         for (const item of data.results) {
           if (item.status === 'sent') {
-            logQueue(`✓ [${item.provider}] ${item.email}`);
+            logQueue(`âœ“ [${item.provider}] ${item.email}`);
           } else {
-            logQueue(`✗ [${item.provider}] ${item.email}: ${item.error}`);
+            logQueue(`âœ— [${item.provider}] ${item.email}: ${item.error}`);
           }
         }
       }
 
       if (data.completed || rem === 0) {
-        logQueue(`✓✓ Complete: All ${dispatched} recipients processed successfully.`);
+        logQueue(`âœ“âœ“ Complete: All ${dispatched} recipients processed successfully.`);
         break;
       }
 

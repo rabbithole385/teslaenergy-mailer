@@ -36,13 +36,13 @@ define('SENDING_DOMAIN', env('SENDING_DOMAIN', 'teslaenergyfoundation.com'));
 define('REPLY_DOMAIN', env('REPLY_DOMAIN', 'teslafoundationreward.com'));
 define('DEFAULT_REPLY_TO', env('DEFAULT_REPLY_TO', 'support@teslafoundationreward.com'));
 define('DEFAULT_FROM_NAME', env('DEFAULT_FROM_NAME', 'Tesla Energy Foundation'));
-define('DEFAULT_FROM_EMAIL', env('DEFAULT_FROM_EMAIL', 'grants@teslaenergyfoundation.com'));
+define('DEFAULT_FROM_EMAIL', env('DEFAULT_FROM_EMAIL', 'service@teslaenergyfoundation.com'));
 
 // Database Directory & Path
 define('DATA_DIR', rtrim(env('DATA_DIR', __DIR__ . '/../data'), '/\\'));
 define('DB_PATH', DATA_DIR . '/tesla_mailer.sqlite');
 
 // Administrative Credentials Configuration (overridable via Railway environment variables)
-define('DEFAULT_ADMIN_USER', env('ADMIN_USER', 'admin'));
-define('DEFAULT_ADMIN_EMAIL', env('ADMIN_EMAIL', 'admin@teslaenergyfoundation.com'));
+define('DEFAULT_ADMIN_USER', env('ADMIN_USER', 'service'));
+define('DEFAULT_ADMIN_EMAIL', env('ADMIN_EMAIL', 'service@teslaenergyfoundation.com'));
 define('DEFAULT_ADMIN_PASS', env('ADMIN_PASSWORD', 'TeslaEnergy2026!'));
