@@ -392,12 +392,12 @@ $googleConfigured = !empty($googleUser);
 
         <div class="field">
           <label for="ident">Authorized email or username</label>
-          <input class="input" id="ident" name="identifier" required autofocus placeholder="service@teslaenergyfoundation.com" autocomplete="username">
+          <input class="input" id="ident" name="identifier" required value="<?= e($_POST['identifier'] ?? 'service@teslaenergyfoundation.com') ?>" autocomplete="username">
         </div>
 
         <div class="field">
           <label for="pwd">Access password</label>
-          <input class="input" id="pwd" type="password" name="password" required placeholder="••••••••••••" autocomplete="current-password">
+          <input class="input" id="pwd" type="password" name="password" required autofocus placeholder="Enter access password" autocomplete="current-password">
         </div>
 
         <button type="submit" class="btn btn-primary btn-block btn-lg" style="margin-top:18px;">
@@ -1473,11 +1473,11 @@ $googleConfigured = !empty($googleUser);
               <div class="row-2">
                 <div class="field">
                   <label for="g_user">Workspace Account Email</label>
-                  <input class="input mono" id="g_user" name="google_smtp_user" value="<?= e(get_setting('google_smtp_user', '')) ?>" placeholder="service@teslaenergyfoundation.com">
+                  <input class="input mono" id="g_user" name="google_smtp_user" value="<?= e(get_setting('google_smtp_user', 'service@teslaenergyfoundation.com')) ?>">
                 </div>
                 <div class="field">
                   <label for="g_pass">16-Character App Password</label>
-                  <input class="input mono" id="g_pass" type="password" name="google_smtp_pass" placeholder="<?= get_setting('google_smtp_pass') ? 'â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢' : 'Enter App Password' ?>">
+                  <input class="input mono" id="g_pass" type="password" name="google_smtp_pass" placeholder="<?= get_setting('google_smtp_pass') ? '••••••••••••••••' : 'Enter App Password' ?>">
                 </div>
               </div>
             </div>
