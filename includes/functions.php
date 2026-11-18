@@ -79,6 +79,8 @@ function init_schema(PDO $pdo, bool $isMySQL = false): void {
         sender_name VARCHAR(120),
         sender_email VARCHAR(120),
         reply_to VARCHAR(120),
+        cc_address $textType,
+        bcc_address $textType,
         body_html $textType NOT NULL,
         body_text $textType,
         total_recipients INT DEFAULT 0,
@@ -113,6 +115,8 @@ function init_schema(PDO $pdo, bool $isMySQL = false): void {
         from_address VARCHAR(150) NOT NULL,
         from_name VARCHAR(120),
         to_address VARCHAR(255) NOT NULL,
+        cc_address $textType,
+        bcc_address $textType,
         reply_to VARCHAR(150),
         subject VARCHAR(255) NOT NULL,
         body_html $textType,
@@ -182,6 +186,30 @@ function init_schema(PDO $pdo, bool $isMySQL = false): void {
     $tplCount = (int)$pdo->query('SELECT COUNT(*) FROM templates')->fetchColumn();
     if ($tplCount === 0) {
         seed_templates($pdo);
+    }
+
+    // Live schema migrations — add cc/bcc columns if upgrading from older install
+    $migrationCols = [
+        'campaigns'  => ['cc_address', 'bcc_address'],
+        'email_logs' => ['cc_address', 'bcc_address'],
+    ];
+    foreach ($migrationCols as $table => $cols) {
+        if ($isMySQL) {
+            $existSt = $pdo->query("SHOW COLUMNS FROM `$table`");
+            $existing = array_column($existSt->fetchAll(), 'Field');
+        } else {
+            $existSt = $pdo->query("PRAGMA table_info($table)");
+            $existing = array_column($existSt->fetchAll(), 'name');
+        }
+        foreach ($cols as $col) {
+            if (!in_array($col, $existing, true)) {
+                try {
+                    $pdo->exec("ALTER TABLE `$table` ADD COLUMN `$col` TEXT");
+                } catch (Throwable $ex) {
+                    // ignore if already exists
+                }
+            }
+        }
     }
 }
 
@@ -409,7 +437,25 @@ function generate_ref(): string {
 }
 
 /**
+ * Helper: parse and validate a comma-separated list of emails
+ */
+function parse_email_list($input): array {
+    if (empty($input)) return [];
+    $arr = is_array($input) ? $input : array_map('trim', explode(',', (string)$input));
+    $valid = [];
+    foreach ($arr as $e) {
+        // Strip display name if present: "Name <email>"
+        if (preg_match('/<([^>]+)>/', $e, $m)) $e = $m[1];
+        $e = trim($e);
+        $clean = filter_var($e, FILTER_VALIDATE_EMAIL);
+        if ($clean) $valid[] = $clean;
+    }
+    return array_values(array_unique($valid));
+}
+
+/**
  * 1. RESEND DISPATCHER (HTTPS cURL API)
+ *    Supports To, CC, BCC — delivers to Gmail, Yahoo, Outlook, .com and all domains.
  */
 function send_resend_email(
     $to,
@@ -418,7 +464,9 @@ function send_resend_email(
     string $textBody = '',
     string $fromName = '',
     string $fromEmail = '',
-    string $replyTo = ''
+    string $replyTo = '',
+    $cc = '',
+    $bcc = ''
 ): array {
     $apiKey = get_setting('resend_api_key', env('RESEND_API_KEY', ''));
     if (empty($apiKey)) {
@@ -430,13 +478,9 @@ function send_resend_email(
     $finalFrom = $finalFromName . ' <' . $finalFromEmail . '>';
     $finalReplyTo = $replyTo ?: get_setting('reply_to_email', DEFAULT_REPLY_TO);
 
-    $toArr = is_array($to) ? $to : array_map('trim', explode(',', (string)$to));
-    $validRecipients = [];
-    foreach ($toArr as $m) {
-        $cleanM = filter_var($m, FILTER_VALIDATE_EMAIL);
-        if ($cleanM) $validRecipients[] = $cleanM;
-    }
-    $validRecipients = array_values(array_unique($validRecipients));
+    $validRecipients = parse_email_list($to);
+    $validCC         = parse_email_list($cc);
+    $validBCC        = parse_email_list($bcc);
 
     if (empty($validRecipients)) {
         return ['ok' => false, 'error' => 'No valid recipient email address specified.', 'provider' => 'resend'];
@@ -450,15 +494,16 @@ function send_resend_email(
         'text'    => $textBody ?: strip_tags(preg_replace('/<br\s*\/?>/i', "\n", $htmlBody))
     ];
 
-    if (!empty($finalReplyTo)) {
-        $payload['reply_to'] = $finalReplyTo;
-    }
+    if (!empty($finalReplyTo)) $payload['reply_to'] = $finalReplyTo;
+    if (!empty($validCC))       $payload['cc']       = $validCC;
+    if (!empty($validBCC))      $payload['bcc']      = $validBCC;
 
     $ch = curl_init('https://api.resend.com/emails');
     curl_setopt_array($ch, [
         CURLOPT_POST           => true,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_TIMEOUT        => 15,
+        CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_HTTPHEADER     => [
             'Authorization: Bearer ' . $apiKey,
             'Content-Type: application/json'
@@ -482,12 +527,15 @@ function send_resend_email(
         'error'    => $errMsg,
         'provider' => 'resend',
         'code'     => $code,
-        'to'       => $validRecipients
+        'to'       => $validRecipients,
+        'cc'       => $validCC,
+        'bcc'      => $validBCC,
     ];
 }
 
 /**
  * 2. GOOGLE WORKSPACE SMTP DISPATCHER (Pure PHP Stream Socket)
+ *    Supports To, CC, BCC — delivers to Gmail, Yahoo, Outlook, .com and all domains.
  */
 function send_google_smtp_email(
     $to,
@@ -496,7 +544,9 @@ function send_google_smtp_email(
     string $textBody = '',
     string $fromName = '',
     string $fromEmail = '',
-    string $replyTo = ''
+    string $replyTo = '',
+    $cc = '',
+    $bcc = ''
 ): array {
     $host = get_setting('google_smtp_host', env('SMTP_HOST', 'smtp.gmail.com'));
     $port = (int)get_setting('google_smtp_port', env('SMTP_PORT', '465'));
@@ -507,17 +557,16 @@ function send_google_smtp_email(
         return ['ok' => false, 'error' => 'Google Workspace SMTP user or App Password is not configured.', 'provider' => 'google_workspace'];
     }
 
-    $finalFromName = $fromName ?: get_setting('default_from_name', DEFAULT_FROM_NAME);
+    $finalFromName  = $fromName  ?: get_setting('default_from_name',  DEFAULT_FROM_NAME);
     $finalFromEmail = $fromEmail ?: get_setting('default_from_email', DEFAULT_FROM_EMAIL);
-    $finalReplyTo = $replyTo ?: get_setting('reply_to_email', DEFAULT_REPLY_TO);
+    $finalReplyTo   = $replyTo   ?: get_setting('reply_to_email',     DEFAULT_REPLY_TO);
 
-    $toArr = is_array($to) ? $to : array_map('trim', explode(',', (string)$to));
-    $validRecipients = [];
-    foreach ($toArr as $m) {
-        $cleanM = filter_var($m, FILTER_VALIDATE_EMAIL);
-        if ($cleanM) $validRecipients[] = $cleanM;
-    }
-    $validRecipients = array_values(array_unique($validRecipients));
+    $validRecipients = parse_email_list($to);
+    $validCC         = parse_email_list($cc);
+    $validBCC        = parse_email_list($bcc);
+
+    // RCPT TO must include To + CC + BCC
+    $allRcpt = array_unique(array_merge($validRecipients, $validCC, $validBCC));
 
     if (empty($validRecipients)) {
         return ['ok' => false, 'error' => 'No valid recipient email address specified.', 'provider' => 'google_workspace'];
@@ -564,7 +613,7 @@ function send_google_smtp_email(
         $cmd(base64_encode($pass), [235]);
 
         $cmd('MAIL FROM:<' . $finalFromEmail . '>', [250]);
-        foreach ($validRecipients as $r) {
+        foreach ($allRcpt as $r) {
             $cmd("RCPT TO:<$r>", [250, 251]);
         }
 
@@ -583,9 +632,8 @@ function send_google_smtp_email(
             'Content-Type: multipart/alternative; boundary="' . $boundary . '"'
         ];
 
-        if (!empty($finalReplyTo)) {
-            $headers[] = 'Reply-To: ' . $finalReplyTo;
-        }
+        if (!empty($finalReplyTo)) $headers[] = 'Reply-To: ' . $finalReplyTo;
+        if (!empty($validCC))      $headers[] = 'Cc: ' . implode(', ', $validCC);
 
         $plain = $textBody ?: strip_tags(preg_replace('/<br\s*\/?>/i', "\n", $htmlBody));
 
@@ -612,7 +660,9 @@ function send_google_smtp_email(
             'id'       => $msgId,
             'error'    => '',
             'provider' => 'google_workspace',
-            'to'       => $validRecipients
+            'to'       => $validRecipients,
+            'cc'       => $validCC,
+            'bcc'      => $validBCC,
         ];
 
     } catch (Throwable $e) {
@@ -627,6 +677,7 @@ function send_google_smtp_email(
 
 /**
  * 3. DUAL ROUTER & INTELLIGENT LOAD BALANCER
+ *    Full CC, BCC, and unrestricted domain delivery (Gmail, Yahoo, Outlook, .com, etc.)
  */
 function send_dual_email(
     $to,
@@ -637,13 +688,15 @@ function send_dual_email(
     string $fromEmail = '',
     string $replyTo = '',
     string $preferredProvider = '',
-    ?int $campaignId = null
+    ?int $campaignId = null,
+    $cc = '',
+    $bcc = ''
 ): array {
     static $balanceCounter = 0;
     $balanceCounter++;
 
     $mode = $preferredProvider ?: get_setting('provider_mode', 'auto_balance');
-    $resendRatio = (int)get_setting('resend_ratio', '60');
+    $resendRatio     = (int)get_setting('resend_ratio', '60');
     $isResendEnabled = get_setting('resend_enabled', '1') === '1';
     $isGoogleEnabled = get_setting('google_smtp_enabled', '1') === '1';
 
@@ -669,18 +722,18 @@ function send_dual_email(
     $res = null;
 
     if ($chosenProvider === 'resend') {
-        $res = send_resend_email($to, $subject, $htmlBody, $textBody, $fromName, $fromEmail, $replyTo);
+        $res = send_resend_email($to, $subject, $htmlBody, $textBody, $fromName, $fromEmail, $replyTo, $cc, $bcc);
     } else {
-        $res = send_google_smtp_email($to, $subject, $htmlBody, $textBody, $fromName, $fromEmail, $replyTo);
+        $res = send_google_smtp_email($to, $subject, $htmlBody, $textBody, $fromName, $fromEmail, $replyTo, $cc, $bcc);
     }
 
     // Auto Failover to alternate gateway if primary failed
     if (empty($res['ok']) && ($mode === 'auto_balance' || $mode === 'failover') && $isResendEnabled && $isGoogleEnabled) {
         $alternateProvider = ($chosenProvider === 'resend') ? 'google_workspace' : 'resend';
         if ($alternateProvider === 'resend') {
-            $altRes = send_resend_email($to, $subject, $htmlBody, $textBody, $fromName, $fromEmail, $replyTo);
+            $altRes = send_resend_email($to, $subject, $htmlBody, $textBody, $fromName, $fromEmail, $replyTo, $cc, $bcc);
         } else {
-            $altRes = send_google_smtp_email($to, $subject, $htmlBody, $textBody, $fromName, $fromEmail, $replyTo);
+            $altRes = send_google_smtp_email($to, $subject, $htmlBody, $textBody, $fromName, $fromEmail, $replyTo, $cc, $bcc);
         }
 
         if (!empty($altRes['ok'])) {
@@ -695,16 +748,18 @@ function send_dual_email(
     try {
         $pdo = db();
         $targetStr = is_array($to) ? implode(', ', $to) : (string)$to;
+        $ccStr  = is_array($cc)  ? implode(', ', $cc)  : (string)$cc;
+        $bccStr = is_array($bcc) ? implode(', ', $bcc) : (string)$bcc;
         $snippet = mb_substr(strip_tags($textBody ?: $htmlBody), 0, 160);
         $finalFromEmail = $fromEmail ?: get_setting('default_from_email', DEFAULT_FROM_EMAIL);
-        $finalFromName = $fromName ?: get_setting('default_from_name', DEFAULT_FROM_NAME);
-        $finalReplyTo = $replyTo ?: get_setting('reply_to_email', DEFAULT_REPLY_TO);
+        $finalFromName  = $fromName  ?: get_setting('default_from_name',  DEFAULT_FROM_NAME);
+        $finalReplyTo   = $replyTo   ?: get_setting('reply_to_email',     DEFAULT_REPLY_TO);
 
         $st = $pdo->prepare('INSERT INTO email_logs (
             campaign_id, provider, message_id, from_address, from_name,
-            to_address, reply_to, subject, body_html, body_text, snippet,
+            to_address, cc_address, bcc_address, reply_to, subject, body_html, body_text, snippet,
             status, error_message, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)');
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)');
 
         $st->execute([
             $campaignId,
@@ -713,6 +768,8 @@ function send_dual_email(
             $finalFromEmail,
             $finalFromName,
             $targetStr,
+            $ccStr  ?: null,
+            $bccStr ?: null,
             $finalReplyTo,
             $subject,
             $htmlBody,

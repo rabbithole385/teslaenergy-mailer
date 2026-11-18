@@ -67,6 +67,8 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
         $senderName = clean($_POST['sender_name'] ?? '', 120) ?: get_setting('default_from_name', DEFAULT_FROM_NAME);
         $senderEmail = clean($_POST['sender_email'] ?? '', 120) ?: get_setting('default_from_email', DEFAULT_FROM_EMAIL);
         $replyTo = clean($_POST['reply_to'] ?? '', 120) ?: get_setting('reply_to_email', DEFAULT_REPLY_TO);
+        $ccAddr = clean($_POST['cc_address'] ?? '', 500);
+        $bccAddr = clean($_POST['bcc_address'] ?? '', 500);
         $providerMode = clean($_POST['provider_mode'] ?? 'auto_balance', 40);
         $bodyHtml = (string)($_POST['html'] ?? $_POST['body_html'] ?? '');
         $rawRecipients = (string)($_POST['recipients'] ?? '');
@@ -112,8 +114,8 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
         } else {
             $pdo->beginTransaction();
             try {
-                $st = $pdo->prepare('INSERT INTO campaigns (title, subject, sender_name, sender_email, reply_to, body_html, total_recipients, provider_mode, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, "ready")');
-                $st->execute([$title, $subject, $senderName, $senderEmail, $replyTo, $bodyHtml, count($validList), $providerMode]);
+                $st = $pdo->prepare('INSERT INTO campaigns (title, subject, sender_name, sender_email, reply_to, cc_address, bcc_address, body_html, total_recipients, provider_mode, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "ready")');
+                $st->execute([$title, $subject, $senderName, $senderEmail, $replyTo, $ccAddr ?: null, $bccAddr ?: null, $bodyHtml, count($validList), $providerMode]);
                 $campId = (int)$pdo->lastInsertId();
 
                 $insRecip = $pdo->prepare('INSERT INTO recipients (campaign_id, email, name, variables_json, status) VALUES (?, ?, ?, ?, "pending")');
@@ -135,6 +137,8 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     // Action B: Direct Quick Dispatch
     if ($act === 'send_quick') {
         $to = clean($_POST['to'] ?? '', 120);
+        $cc = clean($_POST['cc'] ?? '', 500);
+        $bcc = clean($_POST['bcc'] ?? '', 500);
         $subject = clean($_POST['subject'] ?? '', 200) ?: ('Quick Test Dispatch — ' . date('H:i:s'));
         $bodyHtml = (string)($_POST['html'] ?? '');
         $provider = clean($_POST['provider'] ?? 'auto_balance', 40);
@@ -143,7 +147,7 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
             flash('error', 'Please specify a valid recipient address.');
         } else {
             $content = $bodyHtml ?: '<div style="font-family:Arial,sans-serif;padding:24px;border:1px solid #e2e8f0;border-radius:8px;"><h2>Tesla Energy Foundation</h2><p>This is a live test dispatch from your dual-gateway mailer.</p><p><strong>Reply-To Target:</strong> ' . htmlspecialchars(get_setting('reply_to_email', DEFAULT_REPLY_TO)) . '</p></div>';
-            $res = send_dual_email($to, $subject, $content, strip_tags($content), '', '', '', $provider);
+            $res = send_dual_email($to, $subject, $content, strip_tags($content), '', '', '', $provider, null, $cc, $bcc);
             if (!empty($res['ok'])) {
                 flash('success', "Dispatched to {$to} via {$res['provider']}! (ID: {$res['id']})");
             } else {
@@ -689,6 +693,17 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
                     <input class="input mono" id="reply_to" name="reply_to" value="<?= e(get_setting('reply_to_email', DEFAULT_REPLY_TO)) ?>">
                   </div>
                 </div>
+
+                <div class="row-2">
+                  <div class="field">
+                    <label for="cc_addr">CC <span class="muted small">(comma-separated, optional)</span></label>
+                    <input class="input mono" id="cc_addr" name="cc_address" placeholder="cc1@example.com, cc2@gmail.com">
+                  </div>
+                  <div class="field">
+                    <label for="bcc_addr">BCC <span class="muted small">(comma-separated, optional)</span></label>
+                    <input class="input mono" id="bcc_addr" name="bcc_address" placeholder="bcc@example.com">
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -812,8 +827,8 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
 
           <div class="row-2">
             <div class="field">
-              <label for="q_to">Recipient email</label>
-              <input class="input" id="q_to" name="to" type="email" required placeholder="recipient@example.com">
+              <label for="q_to">Recipient email (To)</label>
+              <input class="input" id="q_to" name="to" type="email" required placeholder="recipient@gmail.com">
             </div>
             <div class="field">
               <label for="q_provider">Gateway</label>
@@ -822,6 +837,17 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
                 <option value="resend_only">Resend Paid API Only</option>
                 <option value="google_only">Google Workspace SMTP Only</option>
               </select>
+            </div>
+          </div>
+
+          <div class="row-2">
+            <div class="field">
+              <label for="q_cc">CC <span class="muted small">(optional, comma-separated)</span></label>
+              <input class="input mono" id="q_cc" name="cc" placeholder="cc@gmail.com, another@outlook.com">
+            </div>
+            <div class="field">
+              <label for="q_bcc">BCC <span class="muted small">(optional, comma-separated)</span></label>
+              <input class="input mono" id="q_bcc" name="bcc" placeholder="bcc@example.com">
             </div>
           </div>
 
@@ -891,7 +917,8 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
               <tr>
                 <th>Status</th>
                 <th>Gateway</th>
-                <th>Recipient</th>
+                <th>To</th>
+                <th>CC / BCC</th>
                 <th>Subject</th>
                 <th>Message ID</th>
                 <th>Timestamp</th>
@@ -899,7 +926,7 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
             </thead>
             <tbody>
               <?php if (empty($emailLogs)): ?>
-                <tr><td colspan="6" class="empty">No emails logged in outbox yet.</td></tr>
+                <tr><td colspan="7" class="empty">No emails logged in outbox yet.</td></tr>
               <?php else: foreach ($emailLogs as $log): ?>
                 <tr>
                   <td>
@@ -909,7 +936,13 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
                   </td>
                   <td><span class="badge badge-mono"><?= e($log['provider']) ?></span></td>
                   <td><strong><?= e($log['to_address']) ?></strong></td>
-                  <td class="small muted truncate" style="max-width:300px;"><?= e($log['subject']) ?></td>
+                  <td class="small muted"><?php
+                    $ccbcc = [];
+                    if (!empty($log['cc_address']))  $ccbcc[] = 'CC: ' . $log['cc_address'];
+                    if (!empty($log['bcc_address'])) $ccbcc[] = 'BCC: ' . $log['bcc_address'];
+                    echo $ccbcc ? e(implode(' | ', $ccbcc)) : '—';
+                  ?></td>
+                  <td class="small muted truncate" style="max-width:280px;"><?= e($log['subject']) ?></td>
                   <td class="num small muted"><?= e($log['message_id'] ?: '—') ?></td>
                   <td class="small muted"><?= date('M j, H:i:s', strtotime($log['created_at'])) ?></td>
                 </tr>

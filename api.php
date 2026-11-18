@@ -100,7 +100,9 @@ switch ($action) {
                 $campaign['sender_email'] ?: DEFAULT_FROM_EMAIL,
                 $campaign['reply_to'] ?: DEFAULT_REPLY_TO,
                 $campaign['provider_mode'],
-                $campaignId
+                $campaignId,
+                $campaign['cc_address'] ?? '',
+                $campaign['bcc_address'] ?? ''
             );
 
             if (!empty($res['ok'])) {
