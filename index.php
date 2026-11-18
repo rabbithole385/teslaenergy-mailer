@@ -1,7 +1,7 @@
 <?php
 /**
- * Tesla Energy Foundation — Enterprise Mailer Hub
- * High-Volume Dual-Gateway Bulk Sending Engine (Resend API + Google Workspace SMTP)
+ * Tesla Energy Foundation — Business Mail & High-Throughput Bulk Dispatcher (6k/day)
+ * Architecture inspired by OakView Mail & Mailview design system
  */
 
 require_once __DIR__ . '/includes/functions.php';
@@ -15,7 +15,7 @@ $error = '';
 $self = 'index.php';
 
 // ----------------------------------------------------
-// 1. AUTHENTICATION CONTROLLER
+// 1. AUTHENTICATION HANDLING
 // ----------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'login') {
     if (!csrf_check()) {
@@ -40,7 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'login
             header('Location: ' . $self);
             exit;
         }
-        $error = 'Invalid credentials. Please verify your access details.';
+        $error = 'Invalid credentials. Please verify your email/username and password.';
     }
 }
 
@@ -55,20 +55,20 @@ $authed = is_authed();
 $currentUser = current_user();
 
 // ----------------------------------------------------
-// 2. DISPATCH & MANAGEMENT ACTIONS
+// 2. ACTIONS CONTROLLER (CAMPAIGNS, SETTINGS, LOGS)
 // ----------------------------------------------------
 if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     $act = $_POST['action'] ?? '';
 
-    // Create & Register a Campaign for Dispatch
+    // Action A: Create Bulk Campaign
     if ($act === 'create_campaign') {
-        $title = clean($_POST['title'] ?? '', 150) ?: ('Dispatch Run ' . date('Y-m-d H:i'));
+        $title = clean($_POST['name'] ?? $_POST['title'] ?? '', 150) ?: ('Campaign ' . date('M j, H:i'));
         $subject = clean($_POST['subject'] ?? '', 255);
         $senderName = clean($_POST['sender_name'] ?? '', 120) ?: get_setting('default_from_name', DEFAULT_FROM_NAME);
         $senderEmail = clean($_POST['sender_email'] ?? '', 120) ?: get_setting('default_from_email', DEFAULT_FROM_EMAIL);
         $replyTo = clean($_POST['reply_to'] ?? '', 120) ?: get_setting('reply_to_email', DEFAULT_REPLY_TO);
         $providerMode = clean($_POST['provider_mode'] ?? 'auto_balance', 40);
-        $bodyHtml = (string)($_POST['body_html'] ?? '');
+        $bodyHtml = (string)($_POST['html'] ?? $_POST['body_html'] ?? '');
         $rawRecipients = (string)($_POST['recipients'] ?? '');
 
         $lines = preg_split('/[\r\n]+/', trim($rawRecipients));
@@ -106,9 +106,9 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
         }
 
         if (!$subject || !$bodyHtml) {
-            flash('error', 'Subject line and HTML message body are required.');
+            flash('error', 'Please provide a subject line and HTML body content.');
         } elseif (empty($validList)) {
-            flash('error', 'No valid email addresses found in the recipient list.');
+            flash('error', 'No valid recipient email addresses were found.');
         } else {
             $pdo->beginTransaction();
             try {
@@ -122,50 +122,56 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
                 }
                 $pdo->commit();
 
-                header("Location: {$self}?view=mailer&launch_id={$campId}");
+                flash('success', "Campaign \"{$title}\" created with " . count($validList) . " recipients. Ready for dispatch!");
+                header("Location: {$self}?view=campaigns&launch_id={$campId}");
                 exit;
             } catch (Throwable $e) {
                 $pdo->rollBack();
-                flash('error', 'Failed to initialize campaign: ' . $e->getMessage());
+                flash('error', 'Failed to create campaign: ' . $e->getMessage());
             }
         }
     }
 
-    // Direct Test Send (1-to-1)
-    if ($act === 'test_send') {
-        $to = clean($_POST['test_to'] ?? '', 120);
-        $subject = clean($_POST['test_subject'] ?? '', 200) ?: ('[Test] Verification Notice — ' . date('H:i:s'));
-        $bodyHtml = (string)($_POST['test_body'] ?? '');
-        $provider = clean($_POST['test_provider'] ?? 'auto_balance', 40);
+    // Action B: Direct Quick Dispatch
+    if ($act === 'send_quick') {
+        $to = clean($_POST['to'] ?? '', 120);
+        $subject = clean($_POST['subject'] ?? '', 200) ?: ('Quick Test Dispatch — ' . date('H:i:s'));
+        $bodyHtml = (string)($_POST['html'] ?? '');
+        $provider = clean($_POST['provider'] ?? 'auto_balance', 40);
 
         if (!$to || !filter_var($to, FILTER_VALIDATE_EMAIL)) {
-            flash('error', 'Please enter a valid recipient email address.');
+            flash('error', 'Please specify a valid recipient address.');
         } else {
-            $content = $bodyHtml ?: '<div style="font-family:Arial,sans-serif;padding:20px;border:1px solid #e2e8f0;border-radius:8px;"><h2>Tesla Energy Foundation</h2><p>This is a live test dispatch from your dual-gateway mailer.</p><p><strong>Reply-To:</strong> ' . htmlspecialchars(get_setting('reply_to_email', DEFAULT_REPLY_TO)) . '</p></div>';
+            $content = $bodyHtml ?: '<div style="font-family:Arial,sans-serif;padding:24px;border:1px solid #e2e8f0;border-radius:8px;"><h2>Tesla Energy Foundation</h2><p>This is a live test dispatch from your dual-gateway mailer.</p><p><strong>Reply-To Target:</strong> ' . htmlspecialchars(get_setting('reply_to_email', DEFAULT_REPLY_TO)) . '</p></div>';
             $res = send_dual_email($to, $subject, $content, strip_tags($content), '', '', '', $provider);
             if (!empty($res['ok'])) {
-                flash('success', "Live test delivered to {$to} via {$res['provider']}! (ID: {$res['id']})");
+                flash('success', "Dispatched to {$to} via {$res['provider']}! (ID: {$res['id']})");
             } else {
-                flash('error', "Delivery failed: " . ($res['error'] ?: 'Check SMTP / API credentials.'));
+                flash('error', "Delivery failed: " . ($res['error'] ?: 'Check SMTP and Resend settings.'));
             }
         }
-        header("Location: {$self}?view=" . ($_GET['view'] ?? 'mailer'));
+        header("Location: {$self}?view=compose");
         exit;
     }
 
-    // Save Settings
-    if ($act === 'save_settings') {
+    // Action C: Save All Settings
+    if ($act === 'save_all_settings') {
+        // Identity
         set_setting('sending_domain', clean($_POST['sending_domain'] ?? '', 120) ?: SENDING_DOMAIN);
         set_setting('reply_to_email', clean($_POST['reply_to_email'] ?? '', 120) ?: DEFAULT_REPLY_TO);
         set_setting('default_from_name', clean($_POST['default_from_name'] ?? '', 120) ?: DEFAULT_FROM_NAME);
         set_setting('default_from_email', clean($_POST['default_from_email'] ?? '', 120) ?: DEFAULT_FROM_EMAIL);
 
         // Resend
+        set_setting('resend_enabled', !empty($_POST['resend_enabled']) ? '1' : '0');
         set_setting('resend_api_key', trim((string)($_POST['resend_api_key'] ?? '')));
+        set_setting('resend_daily_limit', clean($_POST['resend_daily_limit'] ?? '5000', 10));
 
         // Google Workspace SMTP
+        set_setting('google_smtp_enabled', !empty($_POST['google_smtp_enabled']) ? '1' : '0');
         set_setting('google_smtp_host', clean($_POST['google_smtp_host'] ?? '', 120) ?: 'smtp.gmail.com');
         set_setting('google_smtp_port', clean($_POST['google_smtp_port'] ?? '', 10) ?: '465');
+        set_setting('google_smtp_secure', clean($_POST['google_smtp_secure'] ?? '1', 1));
         set_setting('google_smtp_user', clean($_POST['google_smtp_user'] ?? '', 120));
         
         $newPass = trim((string)($_POST['google_smtp_pass'] ?? ''));
@@ -173,32 +179,61 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
             set_setting('google_smtp_pass', $newPass);
         }
 
-        // Ratios
+        // Rules & Throttling
         set_setting('provider_mode', clean($_POST['provider_mode'] ?? 'auto_balance', 40));
         set_setting('resend_ratio', (string)max(10, min(90, (int)($_POST['resend_ratio'] ?? 60))));
+        set_setting('batch_size', (string)max(5, min(100, (int)($_POST['batch_size'] ?? 50))));
+        set_setting('delay_between_emails_ms', (string)max(50, min(2000, (int)($_POST['delay_between_emails_ms'] ?? 150))));
+        set_setting('delay_between_batches_ms', (string)max(200, min(10000, (int)($_POST['delay_between_batches_ms'] ?? 1200))));
 
-        flash('success', 'Mailer configuration updated successfully.');
+        flash('success', 'All system settings & gateway configurations have been saved.');
         header("Location: {$self}?view=settings");
         exit;
     }
 
-    // Clear Logs
+    // Action D: Change Password
+    if ($act === 'change_password') {
+        $curPass = (string)($_POST['cur_password'] ?? '');
+        $newPass = (string)($_POST['new_password'] ?? '');
+        $newPass2 = (string)($_POST['new_password2'] ?? '');
+
+        $st = $pdo->prepare('SELECT password_hash FROM users WHERE id = ?');
+        $st->execute([$currentUser['id']]);
+        $hash = $st->fetchColumn();
+
+        if (!$hash || !password_verify($curPass, $hash)) {
+            flash('error', 'Current password was entered incorrectly.');
+        } elseif (strlen($newPass) < 8) {
+            flash('error', 'New password must be at least 8 characters.');
+        } elseif ($newPass !== $newPass2) {
+            flash('error', 'New passwords do not match.');
+        } else {
+            $pdo->prepare('UPDATE users SET password_hash = ? WHERE id = ?')
+                ->execute([password_hash($newPass, PASSWORD_DEFAULT), $currentUser['id']]);
+            flash('success', 'Your account password has been updated.');
+        }
+        header("Location: {$self}?view=settings&tab=security");
+        exit;
+    }
+
+    // Action E: Clear Logs
     if ($act === 'clear_logs') {
         $pdo->exec('DELETE FROM email_logs');
-        flash('success', 'Outbox log cleared.');
+        flash('success', 'Delivery audit logs have been cleared.');
         header("Location: {$self}?view=outbox");
         exit;
     }
 }
 
 // ----------------------------------------------------
-// 3. VIEW CONTROLLER & DATA BINDING
+// 3. DATA PREPARATION FOR ACTIVE VIEW
 // ----------------------------------------------------
-$view = $_GET['view'] ?? 'mailer';
+$view = $_GET['view'] ?? 'overview';
 $flash = get_flash();
 
 $stats = ['totalSent' => 0, 'todaySent' => 0, 'resendSent' => 0, 'googleSent' => 0, 'totalFailed' => 0];
 $templates = [];
+$campaigns = [];
 $emailLogs = [];
 
 if ($authed) {
@@ -210,629 +245,980 @@ if ($authed) {
     $stats['totalFailed'] = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE status = 'failed'")->fetchColumn();
 
     $templates = $pdo->query('SELECT * FROM templates ORDER BY id ASC')->fetchAll();
+    $campaigns = $pdo->query('SELECT * FROM campaigns ORDER BY id DESC LIMIT 50')->fetchAll();
+
     if ($view === 'outbox') {
         $emailLogs = $pdo->query('SELECT * FROM email_logs ORDER BY id DESC LIMIT 150')->fetchAll();
     }
 }
+
+// Check provider configurations
+$resendConfigured = !empty(get_setting('resend_api_key'));
+$googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_setting('google_smtp_pass'));
 ?>
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Tesla Energy Foundation &bull; Mailer</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script>
-tailwind.config = {
-  theme: {
-    extend: {
-      fontFamily: {
-        sans: ['"Plus Jakarta Sans"', 'sans-serif'],
-        mono: ['"JetBrains Mono"', 'monospace']
-      },
-      colors: {
-        brand: {
-          red: '#e82127',
-          redHover: '#cc1d22',
-          dark: '#0c0e14',
-          panel: '#121620',
-          border: '#1f2637'
-        }
-      }
-    }
-  }
-}
-</script>
-<style>
-body { font-family: 'Plus Jakarta Sans', sans-serif; background: #0c0e14; color: #f1f5f9; }
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: #0c0e14; }
-::-webkit-scrollbar-thumb { background: #262f44; border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #384563; }
-.card { background: #121620; border: 1px solid #1f2637; border-radius: 14px; }
-.input-field { background: #080a0f; border: 1px solid #232b3e; color: #ffffff; border-radius: 8px; font-size: 13px; }
-.input-field:focus { border-color: #e82127; outline: none; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Tesla Energy &middot; Business Mail &amp; Dispatch</title>
+  <link rel="stylesheet" href="assets/css/app.css?v=2.1">
 </head>
-<body class="min-h-screen flex flex-col antialiased">
+<body>
 
 <?php if (!$authed): ?>
 <!-- ==============================================
-     CLASSY CORPORATE LOGIN
+     OAKVIEW / MAILVIEW STYLE AUTH SPLIT
      ============================================== -->
-<main class="fixed inset-0 z-50 flex items-center justify-center bg-[#07080c] p-4">
-  <div class="w-full max-w-[400px] card p-8 sm:p-10 relative overflow-hidden shadow-2xl">
-    <div class="text-center mb-7">
-      <div class="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-[#181d2a] border border-[#262f44] text-brand-red mb-3">
-        <i class="fa-solid fa-bolt text-xl"></i>
+<div class="auth-wrap">
+  <aside class="auth-aside">
+    <div class="brand">
+      <div class="brand-mark">TE</div>
+      <div class="brand-text">
+        <b>Tesla Energy</b>
+        <span>Enterprise Dispatch</span>
       </div>
-      <h1 class="text-base font-extrabold tracking-[0.2em] uppercase text-white">Tesla Energy</h1>
-      <p class="text-[11px] uppercase tracking-wider text-slate-400 mt-1 font-semibold">Mailer Distribution Portal</p>
     </div>
 
-    <?php if ($error): ?>
-      <div class="mb-4 p-3 rounded-lg text-xs bg-rose-950/40 text-rose-300 border border-rose-900/60 flex items-center gap-2">
-        <i class="fa-solid fa-circle-exclamation text-rose-400"></i>
-        <span><?= e($error) ?></span>
-      </div>
-    <?php endif; ?>
-
-    <form method="post" action="<?= $self ?>" class="space-y-4">
-      <?= csrf_field() ?>
-      <input type="hidden" name="action" value="login">
-
-      <div>
-        <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Authorized Identity</label>
-        <div class="relative">
-          <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-500">
-            <i class="fa-regular fa-envelope text-xs"></i>
-          </span>
-          <input type="text" name="identifier" required
-                 class="w-full pl-10 pr-3.5 py-2.5 input-field"
-                 placeholder="name@teslaenergyfoundation.com" autofocus autocomplete="username">
-        </div>
-      </div>
-
-      <div>
-        <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Access Credential</label>
-        <div class="relative">
-          <span class="absolute inset-y-0 left-0 flex items-center pl-3.5 text-slate-500">
-            <i class="fa-solid fa-lock text-xs"></i>
-          </span>
-          <input type="password" name="password" required
-                 class="w-full pl-10 pr-3.5 py-2.5 input-field"
-                 placeholder="••••••••••••" autocomplete="current-password">
-        </div>
-      </div>
-
-      <button type="submit"
-              class="w-full py-3 px-4 bg-brand-red hover:bg-brand-redHover text-white font-semibold text-xs tracking-wider uppercase rounded-lg shadow-lg shadow-brand-red/20 transition flex items-center justify-center gap-2 mt-2">
-        <i class="fa-solid fa-shield-halved text-xs"></i>
-        <span>Sign in to Mailer</span>
-      </button>
-    </form>
-
-    <div class="mt-7 pt-4 border-t border-[#1a202e] text-center text-[10px] text-slate-500 tracking-wide uppercase">
-      Authorized Access Only &bull; Tesla Energy Infrastructure
+    <div>
+      <div class="lede">High-throughput mailer engineered for <span><?= e(get_setting('sending_domain', SENDING_DOMAIN)) ?></span></div>
+      <ul class="points">
+        <li>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>
+          <span>Dual Gateway Architecture: Resend Paid API + Google Workspace SMTP (6,000 / day).</span>
+        </li>
+        <li>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>
+          <span>Inbound replies automatically routed to <strong><?= e(get_setting('reply_to_email', DEFAULT_REPLY_TO)) ?></strong>.</span>
+        </li>
+        <li>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>
+          <span>Comprehensive settings for gateways, ratios, throttling, and Cloudflare DNS.</span>
+        </li>
+      </ul>
     </div>
-  </div>
-</main>
+
+    <div class="small muted">&copy; <?= date('Y') ?> Tesla Energy Foundation &bull; Internal Mail Gateway</div>
+  </aside>
+
+  <main class="auth-main">
+    <div class="auth-card">
+      <h1>Sign in to Mailer</h1>
+      <p class="sub">Enter your authorized account credentials to access the console.</p>
+
+      <?php if ($error): ?>
+        <div class="flash flash-error"><?= e($error) ?></div>
+      <?php endif; ?>
+
+      <form method="post" action="<?= $self ?>">
+        <?= csrf_field() ?>
+        <input type="hidden" name="action" value="login">
+
+        <div class="field">
+          <label for="ident">Authorized email or username</label>
+          <input class="input" id="ident" name="identifier" required autofocus placeholder="name@teslaenergyfoundation.com" autocomplete="username">
+        </div>
+
+        <div class="field">
+          <label for="pwd">Access password</label>
+          <input class="input" id="pwd" type="password" name="password" required placeholder="••••••••••••" autocomplete="current-password">
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-block btn-lg" style="margin-top:18px;">
+          Sign in to Mailer
+        </button>
+      </form>
+    </div>
+  </main>
+</div>
 
 <?php else: ?>
 <!-- ==============================================
-     AUTHENTICATED MAILER ENVIRONMENT
+     AUTHENTICATED APP SHELL (SIDEBAR + TOPBAR + CONTENT)
      ============================================== -->
-<header class="bg-[#0f121a] border-b border-brand-border px-6 py-3.5 flex items-center justify-between shrink-0">
-  <div class="flex items-center gap-5">
-    <div class="flex items-center gap-3">
-      <div class="w-9 h-9 rounded-xl bg-brand-red/10 border border-brand-red/30 flex items-center justify-center text-brand-red font-black text-lg">
-        <i class="fa-solid fa-bolt"></i>
+<div class="shell">
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-mark">TE</div>
+      <div class="brand-text">
+        <b>Tesla Energy</b>
+        <span>Business Mail (6k)</span>
       </div>
+    </div>
+
+    <nav class="nav">
+      <div class="nav-group-label">Workspace</div>
+      <a class="nav-item <?= $view === 'overview' ? 'active' : '' ?>" href="?view=overview">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>
+        </svg>
+        <span>Overview</span>
+      </a>
+      <a class="nav-item <?= $view === 'compose' ? 'active' : '' ?>" href="?view=compose">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2.5" y="4.5" width="19" height="15" rx="2.5"/><path d="m3 6.5 8 6a2 2 0 0 0 2 0l8-6"/>
+        </svg>
+        <span>Quick Send</span>
+      </a>
+
+      <div class="nav-group-label">Audience</div>
+      <a class="nav-item <?= $view === 'recipients' ? 'active' : '' ?>" href="?view=recipients">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M16 20v-1.5a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4V20"/><circle cx="9.5" cy="7.5" r="3.5"/><path d="M21 20v-1.5a4 4 0 0 0-3-3.87"/><path d="M16.5 4.1a3.5 3.5 0 0 1 0 6.8"/>
+        </svg>
+        <span>Recipients &amp; Leads</span>
+      </a>
+
+      <div class="nav-group-label">Marketing &amp; 6k Dispatch</div>
+      <a class="nav-item <?= $view === 'campaigns' ? 'active' : '' ?>" href="?view=campaigns">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21.5 2.5 10.5 13.5"/><path d="M21.5 2.5 14.5 21l-4-7.5-7.5-4 18.5-7Z"/>
+        </svg>
+        <span>Campaign Studio</span>
+        <?php if ($stats['todaySent']): ?><span class="count"><?= $stats['todaySent'] ?></span><?php endif; ?>
+      </a>
+      <a class="nav-item <?= $view === 'outbox' ? 'active' : '' ?>" href="?view=outbox">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 3v18h18"/><path d="M7 15l3.5-4 3 2.5L20 7"/>
+        </svg>
+        <span>Outbox &amp; Logs</span>
+      </a>
+
+      <div class="nav-group-label">System</div>
+      <a class="nav-item <?= $view === 'settings' ? 'active' : '' ?>" href="?view=settings">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-2.87 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 3 15a1.7 1.7 0 0 0-1.55-1H1.3a2 2 0 1 1 0-4h.15A1.7 1.7 0 0 0 3 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 7 4.6a1.7 1.7 0 0 0 1-1.55V2.9a2 2 0 1 1 4 0v.15A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9v.1a1.7 1.7 0 0 0 1.55 1h.15a2 2 0 1 1 0 4h-.15a1.7 1.7 0 0 0-1.55 1Z"/>
+        </svg>
+        <span>Settings &amp; Integrations</span>
+      </a>
+      <a class="nav-item <?= $view === 'dns' ? 'active' : '' ?>" href="?view=dns">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+        </svg>
+        <span>Cloudflare DNS</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="user-chip">
+        <div class="avatar">TE</div>
+        <div class="u-meta">
+          <b><?= e($currentUser['username']) ?></b>
+          <span><?= e($currentUser['role']) ?></span>
+        </div>
+      </div>
+      <a href="?logout=1" class="btn btn-sm btn-block" style="margin-top:12px;background:transparent;border-color:rgba(255,255,255,.16);color:#c3cede;">
+        Sign out
+      </a>
+    </div>
+  </aside>
+
+  <!-- Main View Area -->
+  <div class="main">
+    <header class="topbar">
       <div>
-        <div class="flex items-center gap-2">
-          <span class="font-extrabold tracking-wider text-white text-sm">TESLA ENERGY</span>
-          <span class="text-[10px] uppercase font-bold tracking-widest bg-brand-red/20 text-brand-red px-2 py-0.5 rounded border border-brand-red/30">Bulk Mailer</span>
-        </div>
-        <div class="text-[11px] text-slate-400 flex items-center gap-2">
-          <span>Sender: <strong class="text-slate-200"><?= e(get_setting('sending_domain', SENDING_DOMAIN)) ?></strong></span>
-          <span class="text-slate-600">&bull;</span>
-          <span>Replies &rarr; <strong class="text-amber-400"><?= e(get_setting('reply_to_email', DEFAULT_REPLY_TO)) ?></strong></span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Active Service Badges -->
-    <div class="hidden md:flex items-center gap-2 text-xs">
-      <div class="flex items-center gap-1.5 bg-[#080a0f] border border-brand-border px-2.5 py-1 rounded-md">
-        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-        <span class="text-slate-300 font-medium">Resend Paid API</span>
-      </div>
-      <div class="flex items-center gap-1.5 bg-[#080a0f] border border-brand-border px-2.5 py-1 rounded-md">
-        <span class="w-2 h-2 rounded-full bg-sky-400 animate-pulse"></span>
-        <span class="text-slate-300 font-medium">Google Workspace SMTP</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- Top Actions -->
-  <div class="flex items-center gap-3 text-xs">
-    <div class="text-right hidden sm:block">
-      <div class="text-slate-400">Today Dispatched: <strong class="text-white"><?= number_format($stats['todaySent']) ?></strong> / 6,000</div>
-    </div>
-    <div class="h-6 w-px bg-brand-border"></div>
-    <a href="?logout=1" title="Sign Out" class="p-2 text-slate-400 hover:text-rose-400 transition">
-      <i class="fa-solid fa-arrow-right-from-bracket"></i>
-    </a>
-  </div>
-</header>
-
-<!-- Main Navigation Bar -->
-<nav class="bg-[#0a0d13] border-b border-brand-border px-6 flex items-center gap-2 shrink-0">
-  <a href="?view=mailer" class="px-4 py-3 text-xs font-semibold border-b-2 <?= $view === 'mailer' ? 'border-brand-red text-white' : 'border-transparent text-slate-400 hover:text-slate-200' ?> flex items-center gap-2 transition">
-    <i class="fa-solid fa-paper-plane text-brand-red"></i>
-    <span>Bulk Mailer (Send 6k)</span>
-  </a>
-
-  <a href="?view=outbox" class="px-4 py-3 text-xs font-semibold border-b-2 <?= $view === 'outbox' ? 'border-brand-red text-white' : 'border-transparent text-slate-400 hover:text-slate-200' ?> flex items-center gap-2 transition">
-    <i class="fa-solid fa-list-check text-purple-400"></i>
-    <span>Outbox &amp; Logs</span>
-    <?php if ($stats['totalSent']): ?><span class="ml-1 text-[10px] bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded"><?= $stats['totalSent'] ?></span><?php endif; ?>
-  </a>
-
-  <a href="?view=settings" class="px-4 py-3 text-xs font-semibold border-b-2 <?= $view === 'settings' ? 'border-brand-red text-white' : 'border-transparent text-slate-400 hover:text-slate-200' ?> flex items-center gap-2 transition">
-    <i class="fa-solid fa-sliders text-emerald-400"></i>
-    <span>Gateways &amp; SMTP Settings</span>
-  </a>
-
-  <a href="?view=dns" class="px-4 py-3 text-xs font-semibold border-b-2 <?= $view === 'dns' ? 'border-brand-red text-white' : 'border-transparent text-slate-400 hover:text-slate-200' ?> flex items-center gap-2 transition">
-    <i class="fa-brands fa-cloudflare text-orange-400"></i>
-    <span>Cloudflare DNS Guide</span>
-  </a>
-</nav>
-
-<!-- Flash Messages -->
-<?php if ($flash): ?>
-  <div class="px-6 pt-4 max-w-7xl mx-auto w-full">
-    <div class="p-3.5 rounded-xl text-xs flex items-center gap-2.5 <?= $flash['type'] === 'success' ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-800' : 'bg-rose-950/70 text-rose-300 border border-rose-800' ?>">
-      <i class="fa-solid <?= $flash['type'] === 'success' ? 'fa-circle-check text-emerald-400' : 'fa-circle-exclamation text-rose-400' ?>"></i>
-      <span><?= e($flash['msg']) ?></span>
-    </div>
-  </div>
-<?php endif; ?>
-
-<!-- Main Content Area -->
-<main class="flex-1 overflow-y-auto p-6 bg-[#07090e]">
-
-  <?php if ($view === 'mailer'): ?>
-  <!-- ==============================================
-       VIEW 1: BULK MAILER CONSOLE (PRIMARY SCREEN)
-       ============================================== -->
-  <div class="max-w-7xl mx-auto space-y-6">
-
-    <!-- Active Dispatch Monitor (Visible when a campaign is running or launched) -->
-    <div id="live-dispatch-console" class="card p-5 border-brand-red/50 <?= isset($_GET['launch_id']) ? '' : 'hidden' ?>">
-      <div class="flex items-center justify-between pb-3 border-b border-brand-border">
-        <div class="flex items-center gap-2.5">
-          <span class="w-3 h-3 rounded-full bg-emerald-500 animate-ping"></span>
-          <h3 class="text-xs font-bold text-white uppercase tracking-wider">Active Mailer Dispatch Queue</h3>
-        </div>
-        <div class="flex items-center gap-2">
-          <button id="btn-pause-queue" onclick="toggleQueuePause()" class="px-3 py-1 text-xs font-semibold rounded bg-amber-600 hover:bg-amber-500 text-white transition">Pause</button>
-          <button id="btn-stop-queue" onclick="stopQueue()" class="px-3 py-1 text-xs font-semibold rounded bg-rose-600 hover:bg-rose-500 text-white transition">Stop</button>
+        <h1>
+          <?php
+            $titles = [
+              'overview'   => 'Overview &amp; Metrics',
+              'campaigns'  => 'Campaign Studio',
+              'compose'    => 'Quick Send',
+              'recipients' => 'Audience &amp; Recipients',
+              'outbox'     => 'Outbox &amp; Logs',
+              'settings'   => 'Settings &amp; Integrations',
+              'dns'        => 'Cloudflare DNS Records'
+            ];
+            echo $titles[$view] ?? 'Tesla Energy Mailer';
+          ?>
+        </h1>
+        <div class="sub">
+          Domain: <strong class="mono"><?= e(get_setting('sending_domain', SENDING_DOMAIN)) ?></strong> &bull;
+          Replies &rarr; <span class="badge badge-amber badge-mono"><?= e(get_setting('reply_to_email', DEFAULT_REPLY_TO)) ?></span>
         </div>
       </div>
 
-      <div class="mt-4">
-        <div class="flex justify-between text-xs text-slate-300 font-semibold mb-1">
-          <span id="queue-status-text">Dispatching batch...</span>
-          <span id="queue-pct-text" class="text-brand-red font-bold">0%</span>
+      <div class="topbar-spacer"></div>
+
+      <div class="topbar-actions">
+        <a class="btn btn-sm btn-primary" href="?view=campaigns&new=1">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v16M4 12h16"/></svg>
+          New Campaign
+        </a>
+        <a class="btn btn-sm" href="?view=compose">
+          Quick Send
+        </a>
+      </div>
+    </header>
+
+    <div class="content">
+      <?php if ($flash): ?>
+        <div class="flash flash-<?= $flash['type'] === 'success' ? 'success' : 'error' ?>">
+          <?= e($flash['msg']) ?>
         </div>
-        <div class="h-2.5 w-full bg-[#080a0f] rounded-full overflow-hidden p-0.5 border border-brand-border">
-          <div id="queue-progress-bar" class="h-full bg-gradient-to-r from-brand-red to-emerald-400 rounded-full transition-all duration-300" style="width: 0%"></div>
+      <?php endif; ?>
+
+      <?php if ($view === 'overview'): ?>
+      <!-- ==============================================
+           VIEW: OVERVIEW (STAT TILES & LIVE CHECK)
+           ============================================== -->
+      <div class="page-head">
+        <div class="titles">
+          <h1>System Overview</h1>
+          <p class="sub">Real-time status of your dual-gateway sending infrastructure and volume allocation.</p>
         </div>
       </div>
 
-      <!-- Live Terminal Output -->
-      <div class="mt-4 bg-[#050608] rounded-lg p-3 font-mono text-[11px] h-36 overflow-y-auto border border-brand-border space-y-1 text-slate-300" id="queue-terminal">
-        <div class="text-slate-500">[System] Initializing dual gateway mailer...</div>
+      <div class="grid grid-4 mb-3">
+        <div class="card stat">
+          <div class="label">Today Dispatched</div>
+          <div class="value"><?= number_format($stats['todaySent']) ?></div>
+          <div class="delta">of 6,000 daily capacity</div>
+          <?php $pct = min(100, round(($stats['todaySent'] / 6000) * 100)); ?>
+          <div class="bar"><i style="width:<?= $pct ?>%"></i></div>
+        </div>
+
+        <div class="card stat">
+          <div class="label">All-time Delivered</div>
+          <div class="value" style="color:var(--green);"><?= number_format($stats['totalSent']) ?></div>
+          <div class="delta up">&bull; Across dual gateways</div>
+        </div>
+
+        <div class="card stat">
+          <div class="label">Resend Paid API</div>
+          <div class="value mono"><?= number_format($stats['resendSent']) ?></div>
+          <div class="delta">&bull; ~4,000/day allocation</div>
+        </div>
+
+        <div class="card stat">
+          <div class="label">Google Workspace SMTP</div>
+          <div class="value mono"><?= number_format($stats['googleSent']) ?></div>
+          <div class="delta">&bull; ~2,000/day user cap</div>
+        </div>
       </div>
-    </div>
 
-    <!-- The Mailer Form Grid -->
-    <form method="post" action="<?= $self ?>" id="bulk-mailer-form" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <?= csrf_field() ?>
-      <input type="hidden" name="action" value="create_campaign">
+      <div class="grid grid-2 mb-3">
+        <!-- Live Provider Check -->
+        <div class="card">
+          <div class="card-head">
+            <h2>Gateway Status &amp; Connectivity</h2>
+            <div class="spacer"></div>
+            <a href="?view=settings" class="small">Configure &rarr;</a>
+          </div>
+          <div class="card-body">
+            <div class="row between" style="padding:10px 0;border-bottom:1px solid var(--line-soft);">
+              <div>
+                <div style="font-weight:600;color:var(--ink);">Resend Paid API</div>
+                <div class="small muted">High-speed HTTPS campaign delivery</div>
+              </div>
+              <span class="badge <?= $resendConfigured ? 'badge-green' : 'badge-amber' ?>">
+                <span class="badge-dot"></span><?= $resendConfigured ? 'ready' : 'not set' ?>
+              </span>
+            </div>
 
-      <!-- Left 2 Columns: Email Compose & Content -->
-      <div class="lg:col-span-2 space-y-5">
-        <div class="card p-6 space-y-4">
-          <div class="flex items-center justify-between pb-3 border-b border-brand-border">
-            <h2 class="text-xs font-bold uppercase tracking-wider text-white flex items-center gap-2">
-              <i class="fa-solid fa-envelope text-brand-red"></i>
-              <span>Email Composition &amp; Headers</span>
-            </h2>
-            <div class="flex items-center gap-2">
-              <select id="template-select" onchange="loadTemplate(this.value)" class="input-field px-3 py-1.5 text-xs">
-                <option value="">-- Load Pre-built Template --</option>
-                <?php foreach ($templates as $t): ?>
-                  <option value="<?= $t['id'] ?>"><?= e($t['name']) ?></option>
-                <?php endforeach; ?>
+            <div class="row between" style="padding:10px 0;border-bottom:1px solid var(--line-soft);">
+              <div>
+                <div style="font-weight:600;color:var(--ink);">Google Workspace SMTP</div>
+                <div class="small muted">smtp.gmail.com:465 (SSL) &bull; <?= e(get_setting('google_smtp_user') ?: 'not configured') ?></div>
+              </div>
+              <span class="badge <?= $googleConfigured ? 'badge-green' : 'badge-amber' ?>">
+                <span class="badge-dot"></span><?= $googleConfigured ? 'ready' : 'not set' ?>
+              </span>
+            </div>
+
+            <div class="row between" style="padding:10px 0;">
+              <div>
+                <div style="font-weight:600;color:var(--ink);">Auto-Balance Load Router</div>
+                <div class="small muted">Split: <?= get_setting('resend_ratio', '60') ?>% Resend / <?= 100 - (int)get_setting('resend_ratio', '60') ?>% Google with instant failover</div>
+              </div>
+              <span class="badge badge-green"><span class="badge-dot"></span>active</span>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="row wrap" style="gap:8px;">
+              <button class="btn btn-sm" onclick="runLiveCheck('resend')">Test Resend</button>
+              <button class="btn btn-sm" onclick="runLiveCheck('google')">Test Google SMTP</button>
+              <a href="?view=compose" class="btn btn-sm btn-primary">Send Test Email</a>
+            </div>
+            <div id="live-check-res" class="small mt-2 hide"></div>
+          </div>
+        </div>
+
+        <!-- Cloudflare Email Routing Note -->
+        <div class="card">
+          <div class="card-head">
+            <h2>Domain &amp; Routing Topology</h2>
+            <div class="spacer"></div>
+            <a href="?view=dns" class="small">DNS Records &rarr;</a>
+          </div>
+          <div class="card-body">
+            <p class="small muted mb-2">
+              <strong>teslaenergyfoundation.com</strong> is configured strictly as a <strong>sending domain</strong>.
+              All recipient replies and bounces are captured automatically by <strong>teslafoundationreward.com</strong> via injected <span class="mono">Reply-To</span> headers.
+            </p>
+            <div class="alert mb-2">
+              <strong>High Deliverability Notice</strong>
+              SPF authorizes both Resend (`include:resend.com`) and Google Workspace (`include:_spf.google.com`) on Cloudflare with DKIM alignment.
+            </div>
+            <div class="row between small muted">
+              <span>Sending: <strong class="mono"><?= e(get_setting('sending_domain', SENDING_DOMAIN)) ?></strong></span>
+              <span>Inbound: <strong class="mono text-amber"><?= e(get_setting('reply_to_email', DEFAULT_REPLY_TO)) ?></strong></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recent Campaigns -->
+      <div class="card">
+        <div class="card-head">
+          <h2>Recent Dispatch Runs</h2>
+          <div class="spacer"></div>
+          <a class="btn btn-sm btn-primary" href="?view=campaigns&new=1">+ Create Campaign</a>
+        </div>
+        <div class="table-wrap">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>Campaign</th>
+                <th>Subject</th>
+                <th>Audience</th>
+                <th>Sent</th>
+                <th>Failed</th>
+                <th>Mode</th>
+                <th>Status</th>
+                <th>Date</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php if (empty($campaigns)): ?>
+                <tr><td colspan="9" class="empty">No campaigns registered yet. Click &ldquo;Create Campaign&rdquo; to begin.</td></tr>
+              <?php else: foreach (array_slice($campaigns, 0, 10) as $c): ?>
+                <tr>
+                  <td><strong><?= e($c['title']) ?></strong></td>
+                  <td class="small muted truncate" style="max-width:240px;"><?= e($c['subject']) ?></td>
+                  <td class="num"><?= number_format($c['total_recipients']) ?></td>
+                  <td class="num" style="color:var(--green); font-weight:600;"><?= number_format($c['sent_count']) ?></td>
+                  <td class="num" style="color:var(--red);"><?= number_format($c['failed_count']) ?></td>
+                  <td><span class="badge badge-mono"><?= e($c['provider_mode']) ?></span></td>
+                  <td>
+                    <span class="badge <?= $c['status'] === 'completed' ? 'badge-green' : 'badge-blue' ?>">
+                      <span class="badge-dot"></span><?= e($c['status']) ?>
+                    </span>
+                  </td>
+                  <td class="small muted"><?= date('M j, H:i', strtotime($c['created_at'])) ?></td>
+                  <td>
+                    <a class="btn btn-sm" href="?view=campaigns&launch_id=<?= $c['id'] ?>">Dispatch &rarr;</a>
+                  </td>
+                </tr>
+              <?php endforeach; endif; ?>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <?php elseif ($view === 'campaigns'): ?>
+      <!-- ==============================================
+           VIEW: CAMPAIGN STUDIO (6K BULK MAILER)
+           ============================================== -->
+      <div class="page-head">
+        <div class="titles">
+          <h1>Campaign Studio</h1>
+          <p class="sub">Compose, personalize with dynamic merge tokens, and bulk-dispatch via dual gateways.</p>
+        </div>
+      </div>
+
+      <!-- Live Dispatch Queue Box (Shown if a campaign is actively launched) -->
+      <div id="queue-box" class="card mb-3 <?= isset($_GET['launch_id']) ? '' : 'hide' ?>" style="border:2px solid var(--accent);">
+        <div class="card-head" style="background:var(--surface-2);">
+          <h2>Live Dispatch Queue</h2>
+          <div class="spacer"></div>
+          <button id="btn-pause-queue" onclick="toggleQueuePause()" class="btn btn-sm">Pause</button>
+          <button onclick="stopQueue()" class="btn btn-sm btn-danger">Halt</button>
+        </div>
+        <div class="card-body">
+          <div class="row between mb-1 small">
+            <span id="queue-status-text">Dispatching campaign batch...</span>
+            <strong id="queue-pct-text" class="mono">0%</strong>
+          </div>
+          <div class="progress mb-2">
+            <i id="queue-progress-bar" style="width:0%;"></i>
+          </div>
+          <div id="queue-terminal" class="textarea mono small" style="height:150px; background:#0b1118; color:#9ab5d5; overflow-y:auto; padding:10px;">
+            <div>[System] Initializing dual gateway router...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Campaign Form -->
+      <form method="post" action="<?= $self ?>" id="campaignForm">
+        <?= csrf_field() ?>
+        <input type="hidden" name="action" value="create_campaign">
+
+        <div class="editor-grid">
+          <div class="stack">
+            <!-- Basics Card -->
+            <div class="card">
+              <div class="card-head"><h2>Basics &amp; Headers</h2></div>
+              <div class="card-body">
+                <div class="field">
+                  <label for="name">Campaign name</label>
+                  <input class="input" id="name" name="name" required placeholder="e.g. Clean Energy Allocation Notice #1">
+                </div>
+
+                <div class="row-2">
+                  <div class="field">
+                    <label for="from_name">From name</label>
+                    <input class="input" id="from_name" name="sender_name" value="<?= e(get_setting('default_from_name', DEFAULT_FROM_NAME)) ?>">
+                  </div>
+                  <div class="field">
+                    <label for="from_email">From email</label>
+                    <input class="input mono" id="from_email" name="sender_email" value="<?= e(get_setting('default_from_email', DEFAULT_FROM_EMAIL)) ?>">
+                  </div>
+                </div>
+
+                <div class="row-2">
+                  <div class="field">
+                    <label for="subject">Subject line</label>
+                    <input class="input" id="subject" name="subject" required placeholder="OFFICIAL ALLOCATION: Tesla Energy Foundation Grant [Ref: {{ref_id}}]">
+                  </div>
+                  <div class="field">
+                    <label for="reply_to">Reply-To (Inbound replies)</label>
+                    <input class="input mono" id="reply_to" name="reply_to" value="<?= e(get_setting('reply_to_email', DEFAULT_REPLY_TO)) ?>">
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Audience Recipients -->
+            <div class="card">
+              <div class="card-head">
+                <h2>Audience &amp; Recipient List</h2>
+                <div class="spacer"></div>
+                <button type="button" class="btn btn-sm btn-ghost" onclick="insertSampleLeads()">+ Insert 25 sample leads</button>
+              </div>
+              <div class="card-body">
+                <div class="field">
+                  <label for="recipients">Paste recipient emails (one per line, supports CSV: <span class="mono">email,name,ref_id,grant_amount</span>)</label>
+                  <textarea class="textarea mono" id="recipients" name="recipients" rows="8" required oninput="updateRecipientCount()" placeholder="john.doe@example.com&#10;sarah.connor@gmail.com,Sarah Connor,TEF-8921,$75,000"></textarea>
+                  <div class="hint" id="recipient-count-label">0 recipient addresses loaded &bull; Duplicates automatically filtered</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Content & HTML -->
+            <div class="card">
+              <div class="card-head">
+                <h2>Email Content</h2>
+                <div class="spacer"></div>
+                <select class="select" id="templatePicker" style="max-width:240px;" onchange="loadTemplate(this.value)">
+                  <option value="">— Load pre-built template —</option>
+                  <?php foreach ($templates as $t): ?>
+                    <option value="<?= $t['id'] ?>"><?= e($t['name']) ?></option>
+                  <?php endforeach; ?>
+                </select>
+              </div>
+              <div class="card-body">
+                <div class="toolbar mb-2" style="gap:6px;">
+                  <span class="small muted">Insert token:</span>
+                  <button type="button" class="pill" onclick="insertToken('{{name}}')">{{name}}</button>
+                  <button type="button" class="pill" onclick="insertToken('{{email}}')">{{email}}</button>
+                  <button type="button" class="pill" onclick="insertToken('{{ref_id}}')">{{ref_id}}</button>
+                  <button type="button" class="pill" onclick="insertToken('{{grant_amount}}')">{{grant_amount}}</button>
+                  <button type="button" class="pill" onclick="insertToken('{{date}}')">{{date}}</button>
+                </div>
+                <div class="field">
+                  <label for="htmlBody">HTML body</label>
+                  <textarea class="textarea mono" id="htmlBody" name="html" rows="16" required oninput="updatePreview()"></textarea>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right Column: Settings & Launch -->
+          <div class="stack">
+            <!-- Gateway Strategy -->
+            <div class="card">
+              <div class="card-head"><h2>Delivery Gateway</h2></div>
+              <div class="card-body">
+                <div class="field">
+                  <label>Dispatch Mode</label>
+                  <div class="stack" style="gap:8px;">
+                    <label class="check">
+                      <input type="radio" name="provider_mode" value="auto_balance" checked>
+                      <span>
+                        <strong>Auto-Balance (Recommended)</strong>
+                        <div class="small muted">Balances <?= get_setting('resend_ratio', '60') ?>% Resend + <?= 100 - (int)get_setting('resend_ratio', '60') ?>% Google with instant failover</div>
+                      </span>
+                    </label>
+                    <label class="check">
+                      <input type="radio" name="provider_mode" value="resend_only">
+                      <span>
+                        <strong>Resend Paid API Only</strong>
+                        <div class="small muted">Direct HTTPS dispatch</div>
+                      </span>
+                    </label>
+                    <label class="check">
+                      <input type="radio" name="provider_mode" value="google_only">
+                      <span>
+                        <strong>Google Workspace SMTP Only</strong>
+                        <div class="small muted">Direct via smtp.gmail.com:465</div>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <button type="submit" class="btn btn-primary btn-block btn-lg">
+                  Launch 6k Campaign
+                </button>
+                <div class="hint text-right mt-1">Dispatches in throttled batches to prevent timeouts.</div>
+              </div>
+            </div>
+
+            <!-- Live Preview Frame -->
+            <div class="card">
+              <div class="card-head"><h2>Visual Preview</h2></div>
+              <div class="card-body tight">
+                <div class="preview-frame">
+                  <div class="chrome">Rendered Output</div>
+                  <iframe id="htmlPreview"></iframe>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </form>
+
+      <?php elseif ($view === 'compose'): ?>
+      <!-- ==============================================
+           VIEW: QUICK SEND (SINGLE DISPATCH / DIAGNOSTIC)
+           ============================================== -->
+      <div class="page-head">
+        <div class="titles">
+          <h1>Quick Send</h1>
+          <p class="sub">Send a single prioritized message or test delivery to any destination inbox.</p>
+        </div>
+      </div>
+
+      <div class="card" style="max-width:760px;">
+        <div class="card-head"><h2>Direct Dispatch</h2></div>
+        <form method="post" action="<?= $self ?>" class="card-body">
+          <?= csrf_field() ?>
+          <input type="hidden" name="action" value="send_quick">
+
+          <div class="row-2">
+            <div class="field">
+              <label for="q_to">Recipient email</label>
+              <input class="input" id="q_to" name="to" type="email" required placeholder="recipient@example.com">
+            </div>
+            <div class="field">
+              <label for="q_provider">Gateway</label>
+              <select class="select" id="q_provider" name="provider">
+                <option value="auto_balance">Auto-Balance (Dual Gateway)</option>
+                <option value="resend_only">Resend Paid API Only</option>
+                <option value="google_only">Google Workspace SMTP Only</option>
               </select>
             </div>
           </div>
 
-          <!-- Campaign Label & Subject -->
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div class="sm:col-span-1">
-              <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Campaign Label</label>
-              <input type="text" name="title" class="w-full px-3 py-2 input-field" placeholder="e.g. Allocation Notice #1">
-            </div>
-            <div class="sm:col-span-2">
-              <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Subject Line</label>
-              <input type="text" id="mailer-subject" name="subject" required class="w-full px-3 py-2 input-field"
-                     placeholder="OFFICIAL ALLOCATION: Tesla Energy Foundation Grant Notification [Ref: {{ref_id}}]">
-            </div>
+          <div class="field">
+            <label for="q_subject">Subject</label>
+            <input class="input" id="q_subject" name="subject" required value="Tesla Energy Foundation &bull; Notification Verification">
           </div>
 
-          <!-- Senders and Reply-To -->
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label class="block text-[11px] font-semibold text-slate-400 mb-1">From Name</label>
-              <input type="text" name="sender_name" value="<?= e(get_setting('default_from_name', DEFAULT_FROM_NAME)) ?>" class="w-full px-3 py-2 input-field">
-            </div>
-            <div>
-              <label class="block text-[11px] font-semibold text-slate-400 mb-1">From Address</label>
-              <input type="email" name="sender_email" value="<?= e(get_setting('default_from_email', DEFAULT_FROM_EMAIL)) ?>" class="w-full px-3 py-2 input-field font-mono">
-            </div>
-            <div>
-              <label class="block text-[11px] font-semibold text-amber-400 mb-1">Reply-To (Target)</label>
-              <input type="email" name="reply_to" value="<?= e(get_setting('reply_to_email', DEFAULT_REPLY_TO)) ?>" class="w-full px-3 py-2 input-field font-mono text-amber-300">
-            </div>
+          <div class="field">
+            <label for="q_html">HTML Message Content</label>
+            <textarea class="textarea mono" id="q_html" name="html" rows="10" placeholder="<p>Write or paste HTML message content here...</p>"></textarea>
           </div>
 
-          <!-- HTML Message Body -->
-          <div>
-            <div class="flex items-center justify-between mb-1.5">
-              <div class="flex items-center gap-1.5 text-xs text-slate-400">
-                <span class="font-semibold text-white">Merge Tokens:</span>
-                <button type="button" onclick="insertToken('{{name}}')" class="px-1.5 py-0.5 rounded bg-[#080a0f] border border-brand-border text-[11px] text-brand-red font-mono">{{name}}</button>
-                <button type="button" onclick="insertToken('{{email}}')" class="px-1.5 py-0.5 rounded bg-[#080a0f] border border-brand-border text-[11px] text-brand-red font-mono">{{email}}</button>
-                <button type="button" onclick="insertToken('{{ref_id}}')" class="px-1.5 py-0.5 rounded bg-[#080a0f] border border-brand-border text-[11px] text-brand-red font-mono">{{ref_id}}</button>
-                <button type="button" onclick="insertToken('{{grant_amount}}')" class="px-1.5 py-0.5 rounded bg-[#080a0f] border border-brand-border text-[11px] text-brand-red font-mono">{{grant_amount}}</button>
-                <button type="button" onclick="insertToken('{{date}}')" class="px-1.5 py-0.5 rounded bg-[#080a0f] border border-brand-border text-[11px] text-brand-red font-mono">{{date}}</button>
-              </div>
-              <button type="button" onclick="toggleBodyPreview()" class="text-xs text-brand-red hover:underline font-semibold flex items-center gap-1">
-                <i class="fa-solid fa-eye"></i> Toggle Preview
-              </button>
-            </div>
-
-            <textarea id="mailer-html-body" name="body_html" rows="14" required
-                      class="w-full p-3 input-field font-mono text-xs leading-relaxed"
-                      placeholder="Paste your HTML email template here..."></textarea>
-            <div id="mailer-live-preview" class="w-full p-4 bg-white rounded-lg border border-brand-border hidden text-slate-900 overflow-auto max-h-96"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Right Column: Recipient Box, Gateway Selection & Launch -->
-      <div class="space-y-5">
-        <div class="card p-6 space-y-4">
-          <div class="flex items-center justify-between pb-3 border-b border-brand-border">
-            <h2 class="text-xs font-bold uppercase tracking-wider text-white flex items-center gap-2">
-              <i class="fa-solid fa-users text-amber-400"></i>
-              <span>Recipient Email List</span>
-            </h2>
-            <button type="button" onclick="insertSampleRecipients()" class="text-[11px] text-sky-400 hover:underline">
-              + Sample Leads
-            </button>
-          </div>
-
-          <p class="text-[11px] text-slate-400">Paste recipient list (one per line). Supports up to 6,000+ per batch.</p>
-          <textarea id="mailer-recipients" name="recipients" rows="9" required
-                    oninput="countRecipients()"
-                    class="w-full p-3 input-field font-mono text-xs"
-                    placeholder="email@example.com&#10;name@domain.com,John Smith&#10;user@company.com,Sarah,TEF-8921,$75,000"></textarea>
-
-          <div class="flex justify-between items-center text-xs text-slate-400 pt-1">
-            <span id="recipient-counter" class="font-bold text-white">0 recipients loaded</span>
-            <button type="button" onclick="document.getElementById('mailer-recipients').value=''; countRecipients();" class="text-slate-500 hover:text-slate-300 text-[11px]">Clear</button>
-          </div>
-
-          <!-- Dispatch Gateway Selector -->
-          <div class="pt-2 border-t border-brand-border space-y-2">
-            <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Dispatch Gateway</label>
-            <div class="space-y-1.5">
-              <label class="flex items-start gap-2.5 p-2.5 rounded-lg border border-brand-border bg-[#080a0f] cursor-pointer hover:border-brand-red transition">
-                <input type="radio" name="provider_mode" value="auto_balance" checked class="mt-0.5 text-brand-red">
-                <div>
-                  <div class="text-xs font-bold text-white">Auto-Balance (60/40)</div>
-                  <div class="text-[10px] text-slate-400">Balances Resend API &amp; Google Workspace</div>
-                </div>
-              </label>
-              <label class="flex items-start gap-2.5 p-2.5 rounded-lg border border-brand-border bg-[#080a0f] cursor-pointer hover:border-brand-red transition">
-                <input type="radio" name="provider_mode" value="resend_only" class="mt-0.5 text-brand-red">
-                <div>
-                  <div class="text-xs font-bold text-emerald-400">Resend API Only</div>
-                  <div class="text-[10px] text-slate-400">Direct HTTPS API (High Speed)</div>
-                </div>
-              </label>
-              <label class="flex items-start gap-2.5 p-2.5 rounded-lg border border-brand-border bg-[#080a0f] cursor-pointer hover:border-brand-red transition">
-                <input type="radio" name="provider_mode" value="google_only" class="mt-0.5 text-brand-red">
-                <div>
-                  <div class="text-xs font-bold text-sky-400">Google Workspace Only</div>
-                  <div class="text-[10px] text-slate-400">smtp.gmail.com:465 SSL</div>
-                </div>
-              </label>
-            </div>
-          </div>
-
-          <!-- Main Launch Button -->
-          <div class="pt-3">
-            <button type="submit"
-                    class="w-full py-3.5 px-4 bg-brand-red hover:bg-brand-redHover text-white font-bold text-xs uppercase tracking-wider rounded-lg shadow-xl shadow-brand-red/20 transition flex items-center justify-center gap-2">
-              <i class="fa-solid fa-paper-plane"></i>
-              <span>Start Bulk Dispatch</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- Quick 1-to-1 Live Test Send -->
-        <div class="card p-5 space-y-3">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-            <i class="fa-solid fa-vial-circle-check text-emerald-400"></i>
-            <span>Send Quick Test Email</span>
-          </h3>
-          <div class="space-y-2">
-            <input type="email" id="quick-test-email" placeholder="test-recipient@example.com" class="w-full px-3 py-2 input-field text-xs">
-            <button type="button" onclick="sendQuickTest()" class="w-full py-2 bg-[#1b2233] hover:bg-[#232c42] text-slate-200 text-xs font-semibold rounded-lg transition flex items-center justify-center gap-1.5">
-              <span>Send Single Test</span>
-            </button>
-            <div id="quick-test-feedback" class="text-[11px] font-mono hidden"></div>
-          </div>
-        </div>
-      </div>
-    </form>
-  </div>
-
-  <?php elseif ($view === 'outbox'): ?>
-  <!-- ==============================================
-       VIEW 2: OUTBOX & AUDIT LOGS
-       ============================================== -->
-  <div class="card p-6 max-w-7xl mx-auto space-y-4">
-    <div class="flex items-center justify-between pb-3 border-b border-brand-border">
-      <div>
-        <h2 class="text-xs font-bold uppercase tracking-wider text-white flex items-center gap-2">
-          <i class="fa-solid fa-list-check text-purple-400"></i>
-          <span>Delivery Audit Logs</span>
-        </h2>
-        <p class="text-xs text-slate-400 mt-0.5">Historical record of sent messages with provider message IDs</p>
-      </div>
-
-      <div class="flex items-center gap-2">
-        <form method="post" action="<?= $self ?>" onsubmit="return confirm('Clear all outbox records?');">
-          <?= csrf_field() ?>
-          <input type="hidden" name="action" value="clear_logs">
-          <button type="submit" class="px-3 py-1.5 rounded-lg bg-[#1b2233] hover:bg-rose-950/50 hover:text-rose-400 text-slate-300 text-xs transition">
-            Clear Logs
-          </button>
+          <button type="submit" class="btn btn-primary">Dispatch Message</button>
         </form>
-        <a href="?view=outbox" class="px-3 py-1.5 rounded-lg bg-[#1b2233] hover:bg-[#232c42] text-slate-300 text-xs transition">
-          <i class="fa-solid fa-rotate-right mr-1"></i> Refresh
-        </a>
       </div>
-    </div>
 
-    <div class="overflow-x-auto">
-      <table class="w-full text-left text-xs border-collapse font-mono">
-        <thead>
-          <tr class="border-b border-brand-border text-slate-400 uppercase tracking-wider text-[10px] font-sans">
-            <th class="py-3 px-3">Status</th>
-            <th class="py-3 px-3">Gateway</th>
-            <th class="py-3 px-3">Recipient</th>
-            <th class="py-3 px-3">Subject</th>
-            <th class="py-3 px-3">Message ID</th>
-            <th class="py-3 px-3">Timestamp</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-brand-border/60 text-slate-300">
-          <?php if (empty($emailLogs)): ?>
-            <tr><td colspan="6" class="text-center py-10 text-slate-500 font-sans">No emails logged in outbox yet.</td></tr>
-          <?php else: foreach ($emailLogs as $log): ?>
-            <tr>
-              <td class="py-3 px-3">
-                <?php if ($log['status'] === 'sent'): ?>
-                  <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">SENT</span>
-                <?php else: ?>
-                  <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950 text-rose-400 border border-rose-800" title="<?= e($log['error_message']) ?>">FAILED</span>
-                <?php endif; ?>
-              </td>
-              <td class="py-3 px-3">
-                <span class="px-2 py-0.5 rounded text-[10px] font-bold <?= $log['provider'] === 'resend' ? 'bg-emerald-950 text-emerald-300' : 'bg-sky-950 text-sky-300' ?>">
-                  <?= e($log['provider']) ?>
-                </span>
-              </td>
-              <td class="py-3 px-3 font-semibold text-white"><?= e($log['to_address']) ?></td>
-              <td class="py-3 px-3 font-sans text-slate-300 max-w-xs truncate"><?= e($log['subject']) ?></td>
-              <td class="py-3 px-3 text-slate-500 text-[11px] max-w-[140px] truncate"><?= e($log['message_id'] ?: '—') ?></td>
-              <td class="py-3 px-3 text-slate-500"><?= date('M j, H:i', strtotime($log['created_at'])) ?></td>
-            </tr>
-          <?php endforeach; endif; ?>
-        </tbody>
-      </table>
+      <?php elseif ($view === 'recipients'): ?>
+      <!-- ==============================================
+           VIEW: RECIPIENTS & AUDIENCE
+           ============================================== -->
+      <div class="page-head">
+        <div class="titles">
+          <h1>Audience &amp; Recipients</h1>
+          <p class="sub">Manage recipient pools for your 6,000/day grant and notification campaigns.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Recipient Database</h2>
+          <div class="spacer"></div>
+          <a class="btn btn-sm btn-primary" href="?view=campaigns&new=1">Load into Campaign Studio &rarr;</a>
+        </div>
+        <div class="card-body">
+          <p class="small muted mb-2">
+            Recipients can be pasted or imported directly in the <strong>Campaign Studio</strong> with full column mapping for custom variables (<span class="mono">{{name}}</span>, <span class="mono">{{ref_id}}</span>, <span class="mono">{{grant_amount}}</span>).
+          </p>
+          <div class="row">
+            <a href="?view=campaigns&new=1" class="btn btn-sm">Open Campaign Studio</a>
+          </div>
+        </div>
+      </div>
+
+      <?php elseif ($view === 'outbox'): ?>
+      <!-- ==============================================
+           VIEW: OUTBOX & AUDIT LOGS
+           ============================================== -->
+      <div class="page-head">
+        <div class="titles">
+          <h1>Outbox &amp; Logs</h1>
+          <p class="sub">Complete historical record of dispatched messages with provider reference IDs.</p>
+        </div>
+        <div class="row">
+          <form method="post" action="<?= $self ?>" onsubmit="return confirm('Clear all audit logs?');">
+            <?= csrf_field() ?>
+            <input type="hidden" name="action" value="clear_logs">
+            <button class="btn btn-danger btn-sm" type="submit">Clear Logs</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="table-wrap">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Gateway</th>
+                <th>Recipient</th>
+                <th>Subject</th>
+                <th>Message ID</th>
+                <th>Timestamp</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php if (empty($emailLogs)): ?>
+                <tr><td colspan="6" class="empty">No emails logged in outbox yet.</td></tr>
+              <?php else: foreach ($emailLogs as $log): ?>
+                <tr>
+                  <td>
+                    <span class="badge <?= $log['status'] === 'sent' ? 'badge-green' : 'badge-red' ?>">
+                      <span class="badge-dot"></span><?= e($log['status']) ?>
+                    </span>
+                  </td>
+                  <td><span class="badge badge-mono"><?= e($log['provider']) ?></span></td>
+                  <td><strong><?= e($log['to_address']) ?></strong></td>
+                  <td class="small muted truncate" style="max-width:300px;"><?= e($log['subject']) ?></td>
+                  <td class="num small muted"><?= e($log['message_id'] ?: '—') ?></td>
+                  <td class="small muted"><?= date('M j, H:i:s', strtotime($log['created_at'])) ?></td>
+                </tr>
+              <?php endforeach; endif; ?>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <?php elseif ($view === 'settings'): ?>
+      <!-- ==============================================
+           VIEW: SETTINGS & INTEGRATIONS (COMPLETE SETTINGS)
+           ============================================== -->
+      <div class="page-head">
+        <div class="titles">
+          <h1>Settings &amp; Integrations</h1>
+          <p class="sub">Configure delivery gateways, Google Workspace SMTP, throttling, and identity.</p>
+        </div>
+      </div>
+
+      <div class="grid grid-2 mb-3">
+        <!-- Provider Live Status -->
+        <div class="card">
+          <div class="card-head">
+            <h2>Provider Status</h2>
+            <div class="spacer"></div>
+            <span class="small muted">Live check</span>
+          </div>
+          <div class="card-body">
+            <div class="row between" style="padding:9px 0;border-bottom:1px solid var(--line-soft);">
+              <div>
+                <div style="font-weight:600;color:var(--ink);">Campaign delivery</div>
+                <div class="small muted">Resend Paid API</div>
+              </div>
+              <span class="badge <?= $resendConfigured ? 'badge-green' : 'badge-amber' ?>">
+                <span class="badge-dot"></span><?= $resendConfigured ? 'configured' : 'not set' ?>
+              </span>
+            </div>
+
+            <div class="row between" style="padding:9px 0;">
+              <div>
+                <div style="font-weight:600;color:var(--ink);">Mailbox &amp; SMTP</div>
+                <div class="small muted">Google Workspace &middot; <span class="mono"><?= e(get_setting('google_smtp_user') ?: 'not set') ?></span></div>
+              </div>
+              <span class="badge <?= $googleConfigured ? 'badge-green' : 'badge-amber' ?>">
+                <span class="badge-dot"></span><?= $googleConfigured ? 'configured' : 'not set' ?>
+              </span>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="row wrap" style="gap:8px;">
+              <button class="btn btn-sm" onclick="runLiveCheck('resend')">Test delivery connection</button>
+              <button class="btn btn-sm" onclick="runLiveCheck('google')">Test mailbox connection</button>
+            </div>
+            <div id="settings-check-res" class="small mt-2 hide"></div>
+          </div>
+        </div>
+
+        <!-- Cloudflare Email Routing Card -->
+        <div class="card">
+          <div class="card-head"><h2>Cloudflare Email Routing</h2></div>
+          <div class="card-body">
+            <p class="small muted mb-2">
+              Cloudflare Email Routing is <strong>forward-only</strong> infrastructure:
+              emails sent by recipients to <strong>teslaenergyfoundation.com</strong> are cleanly directed to your receiving mailbox at <strong><?= e(get_setting('reply_to_email', DEFAULT_REPLY_TO)) ?></strong>.
+            </p>
+            <div class="alert">
+              <strong>Inbound Architecture</strong>
+              This allows <strong>teslaenergyfoundation.com</strong> to be 100% sending-only, while your incoming operations run on <strong>teslafoundationreward.com</strong>.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings Form with Full Panels -->
+      <form method="post" action="<?= $self ?>">
+        <?= csrf_field() ?>
+        <input type="hidden" name="action" value="save_all_settings">
+
+        <div class="grid grid-2 mb-3">
+          <!-- Panel 1: Identity & Routing -->
+          <div class="card">
+            <div class="card-head"><h2>Sender Identity &amp; Routing</h2></div>
+            <div class="card-body">
+              <div class="field">
+                <label for="s_domain">Sending Domain</label>
+                <input class="input mono" id="s_domain" name="sending_domain" value="<?= e(get_setting('sending_domain', SENDING_DOMAIN)) ?>" required>
+                <div class="hint">Configured on Cloudflare for SPF, DKIM, and DMARC.</div>
+              </div>
+
+              <div class="field">
+                <label for="s_reply">Inbound Reply-To Target</label>
+                <input class="input mono" id="s_reply" name="reply_to_email" value="<?= e(get_setting('reply_to_email', DEFAULT_REPLY_TO)) ?>" required>
+                <div class="hint">Where recipient replies are automatically routed.</div>
+              </div>
+
+              <div class="row-2">
+                <div class="field">
+                  <label for="s_from_name">Default From Name</label>
+                  <input class="input" id="s_from_name" name="default_from_name" value="<?= e(get_setting('default_from_name', DEFAULT_FROM_NAME)) ?>" required>
+                </div>
+                <div class="field">
+                  <label for="s_from_email">Default From Email</label>
+                  <input class="input mono" id="s_from_email" name="default_from_email" value="<?= e(get_setting('default_from_email', DEFAULT_FROM_EMAIL)) ?>" required>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Panel 2: Delivery Provider (Resend Paid API) -->
+          <div class="card">
+            <div class="card-head"><h2>Resend Paid API Gateway</h2></div>
+            <div class="card-body">
+              <div class="field">
+                <label class="check mb-2">
+                  <input type="checkbox" name="resend_enabled" value="1" <?= get_setting('resend_enabled', '1') === '1' ? 'checked' : '' ?>>
+                  <span>Enable Resend API Gateway</span>
+                </label>
+              </div>
+
+              <div class="field">
+                <label for="resend_key">Resend API Key (<span class="mono">re_...</span>)</label>
+                <input class="input mono" id="resend_key" type="password" name="resend_api_key" value="<?= e(get_setting('resend_api_key', '')) ?>" placeholder="re_xxxxxxxxxxxxxxxxxxxxxx">
+              </div>
+
+              <div class="field">
+                <label for="resend_limit">Daily Quota Limit</label>
+                <input class="input mono" id="resend_limit" name="resend_daily_limit" value="<?= e(get_setting('resend_daily_limit', '5000')) ?>">
+              </div>
+            </div>
+          </div>
+
+          <!-- Panel 3: Google Workspace Paid SMTP -->
+          <div class="card">
+            <div class="card-head"><h2>Google Workspace SMTP Gateway</h2></div>
+            <div class="card-body">
+              <div class="field">
+                <label class="check mb-2">
+                  <input type="checkbox" name="google_smtp_enabled" value="1" <?= get_setting('google_smtp_enabled', '1') === '1' ? 'checked' : '' ?>>
+                  <span>Enable Google Workspace SMTP Gateway</span>
+                </label>
+              </div>
+
+              <div class="row-2">
+                <div class="field">
+                  <label for="g_host">SMTP Host</label>
+                  <input class="input mono" id="g_host" name="google_smtp_host" value="<?= e(get_setting('google_smtp_host', 'smtp.gmail.com')) ?>">
+                </div>
+                <div class="field">
+                  <label for="g_port">Port</label>
+                  <input class="input mono" id="g_port" name="google_smtp_port" value="<?= e(get_setting('google_smtp_port', '465')) ?>">
+                </div>
+              </div>
+
+              <div class="row-2">
+                <div class="field">
+                  <label for="g_user">Workspace Account Email</label>
+                  <input class="input mono" id="g_user" name="google_smtp_user" value="<?= e(get_setting('google_smtp_user', '')) ?>" placeholder="grants@teslaenergyfoundation.com">
+                </div>
+                <div class="field">
+                  <label for="g_pass">16-Character App Password</label>
+                  <input class="input mono" id="g_pass" type="password" name="google_smtp_pass" placeholder="<?= get_setting('google_smtp_pass') ? '••••••••••••••••' : 'Enter App Password' ?>">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Panel 4: Dual Balancing & Throttling Rules -->
+          <div class="card">
+            <div class="card-head"><h2>Balancing &amp; Rate Throttling</h2></div>
+            <div class="card-body">
+              <div class="field">
+                <label for="p_mode">Default Provider Mode</label>
+                <select class="select" id="p_mode" name="provider_mode">
+                  <option value="auto_balance" <?= get_setting('provider_mode') === 'auto_balance' ? 'selected' : '' ?>>Auto-Balance (Dual Gateway)</option>
+                  <option value="resend_only" <?= get_setting('provider_mode') === 'resend_only' ? 'selected' : '' ?>>Resend API Only</option>
+                  <option value="google_only" <?= get_setting('provider_mode') === 'google_only' ? 'selected' : '' ?>>Google Workspace Only</option>
+                  <option value="failover" <?= get_setting('provider_mode') === 'failover' ? 'selected' : '' ?>>Primary Resend with Failover</option>
+                </select>
+              </div>
+
+              <div class="field">
+                <label>Split Ratio: <strong id="ratio-label"><?= get_setting('resend_ratio', '60') ?>% Resend / <?= 100 - (int)get_setting('resend_ratio', '60') ?>% Google</strong></label>
+                <input type="range" name="resend_ratio" min="10" max="90" value="<?= (int)get_setting('resend_ratio', '60') ?>"
+                       oninput="document.getElementById('ratio-label').innerText = this.value + '% Resend / ' + (100 - this.value) + '% Google'"
+                       style="width:100%; accent-color:var(--accent);">
+              </div>
+
+              <div class="row-2">
+                <div class="field">
+                  <label for="b_size">Batch Chunk Size</label>
+                  <input class="input mono" id="b_size" name="batch_size" value="<?= e(get_setting('batch_size', '50')) ?>">
+                </div>
+                <div class="field">
+                  <label for="e_delay">Delay between emails (ms)</label>
+                  <input class="input mono" id="e_delay" name="delay_between_emails_ms" value="<?= e(get_setting('delay_between_emails_ms', '150')) ?>">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row between">
+          <span class="small muted">Settings are active immediately across all worker dispatches.</span>
+          <button type="submit" class="btn btn-primary btn-lg">Save Settings &amp; Integrations</button>
+        </div>
+      </form>
+
+      <!-- Password Change Section -->
+      <div class="card mt-3" style="max-width:540px;">
+        <div class="card-head"><h2>Account Security</h2></div>
+        <form method="post" action="<?= $self ?>" class="card-body">
+          <?= csrf_field() ?>
+          <input type="hidden" name="action" value="change_password">
+
+          <div class="field">
+            <label for="cur_pwd">Current password</label>
+            <input class="input" id="cur_pwd" type="password" name="cur_password" required>
+          </div>
+
+          <div class="row-2">
+            <div class="field">
+              <label for="new_pwd">New password</label>
+              <input class="input" id="new_pwd" type="password" name="new_password" required minlength="8">
+            </div>
+            <div class="field">
+              <label for="new_pwd2">Confirm new password</label>
+              <input class="input" id="new_pwd2" type="password" name="new_password2" required minlength="8">
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-dark">Update Password</button>
+        </form>
+      </div>
+
+      <?php elseif ($view === 'dns'): ?>
+      <!-- ==============================================
+           VIEW: CLOUDFLARE DNS SETUP GUIDE
+           ============================================== -->
+      <div class="page-head">
+        <div class="titles">
+          <h1>Cloudflare DNS Configuration</h1>
+          <p class="sub">Essential verification records for teslaenergyfoundation.com</p>
+        </div>
+        <div class="row">
+          <a class="btn btn-sm btn-primary" href="https://dash.cloudflare.com" target="_blank">Open Cloudflare &rarr;</a>
+        </div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-body">
+          <p class="small muted mb-0">
+            Add these records in your Cloudflare DNS zone for <strong>teslaenergyfoundation.com</strong>.
+            Ensure proxy status is set to <strong>DNS Only (Grey Cloud)</strong> for SPF and DKIM.
+          </p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="table-wrap">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Name / Host</th>
+                <th>Content / Value</th>
+                <th>TTL / Proxy</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="badge badge-blue badge-mono">TXT</span></td>
+                <td><strong>@</strong></td>
+                <td><span class="mono">v=spf1 include:resend.com include:_spf.google.com ~all</span></td>
+                <td class="small muted">DNS Only</td>
+                <td class="small muted">SPF: Authorizes Resend + Google Workspace</td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-blue badge-mono">TXT</span></td>
+                <td><strong>_dmarc</strong></td>
+                <td><span class="mono">v=DMARC1; p=quarantine; rua=mailto:dmarc@teslafoundationreward.com</span></td>
+                <td class="small muted">DNS Only</td>
+                <td class="small muted">DMARC: Sender protection</td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-amber badge-mono">CNAME</span></td>
+                <td><strong>resend._domainkey</strong></td>
+                <td><span class="mono">provided-by.resend.com</span></td>
+                <td class="small muted">DNS Only</td>
+                <td class="small muted">Resend DKIM record</td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-blue badge-mono">TXT</span></td>
+                <td><strong>google._domainkey</strong></td>
+                <td><span class="mono">v=DKIM1; k=rsa; p=YOUR_GOOGLE_KEY</span></td>
+                <td class="small muted">DNS Only</td>
+                <td class="small muted">Google Workspace DKIM record</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <?php endif; ?>
+
     </div>
   </div>
-
-  <?php elseif ($view === 'settings'): ?>
-  <!-- ==============================================
-       VIEW 3: GATEWAYS & SMTP SETTINGS
-       ============================================== -->
-  <form method="post" action="<?= $self ?>" class="card p-6 max-w-5xl mx-auto space-y-6">
-    <?= csrf_field() ?>
-    <input type="hidden" name="action" value="save_settings">
-
-    <div class="flex items-center justify-between pb-3 border-b border-brand-border">
-      <div>
-        <h2 class="text-xs font-bold uppercase tracking-wider text-white flex items-center gap-2">
-          <i class="fa-solid fa-sliders text-emerald-400"></i>
-          <span>Dual Gateway &amp; SMTP Configuration</span>
-        </h2>
-        <p class="text-xs text-slate-400 mt-0.5">Configure Resend API and Google Workspace SMTP for bulk 6k sending</p>
-      </div>
-      <button type="submit" class="px-5 py-2 rounded-lg bg-brand-red hover:bg-brand-redHover text-white text-xs font-bold transition">
-        Save Changes
-      </button>
-    </div>
-
-    <!-- Domain & Routing -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      <div>
-        <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Sending Domain</label>
-        <input type="text" name="sending_domain" value="<?= e(get_setting('sending_domain', SENDING_DOMAIN)) ?>" required class="w-full px-3 py-2 input-field font-mono">
-        <p class="text-[11px] text-slate-500 mt-1">Managed on Cloudflare for SPF, DKIM, and DMARC.</p>
-      </div>
-      <div>
-        <label class="block text-[11px] font-semibold uppercase tracking-wider text-amber-400 mb-1">Inbound Reply-To Target</label>
-        <input type="email" name="reply_to_email" value="<?= e(get_setting('reply_to_email', DEFAULT_REPLY_TO)) ?>" required class="w-full px-3 py-2 input-field font-mono text-amber-300">
-        <p class="text-[11px] text-amber-400/80 mt-1">All replies from recipients direct to <strong>teslafoundationreward.com</strong>.</p>
-      </div>
-    </div>
-
-    <!-- Resend Paid API -->
-    <div class="p-5 rounded-xl bg-[#080a0f] border border-brand-border space-y-3">
-      <div class="flex items-center justify-between">
-        <span class="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-2">
-          <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
-          <span>Gateway 1: Resend Paid API</span>
-        </span>
-        <button type="button" onclick="testResendKey()" class="text-xs text-emerald-400 hover:underline font-semibold">
-          Test Connection
-        </button>
-      </div>
-      <div>
-        <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Resend API Key (re_...)</label>
-        <input type="password" id="cfg-resend-key" name="resend_api_key" value="<?= e(get_setting('resend_api_key', '')) ?>" class="w-full px-3 py-2 input-field font-mono" placeholder="re_xxxxxxxxxxxxxxxxxxxx">
-      </div>
-      <div id="resend-feedback" class="text-xs font-mono hidden"></div>
-    </div>
-
-    <!-- Google Workspace Paid SMTP -->
-    <div class="p-5 rounded-xl bg-[#080a0f] border border-brand-border space-y-3">
-      <div class="flex items-center justify-between">
-        <span class="text-xs font-bold uppercase tracking-wider text-sky-400 flex items-center gap-2">
-          <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>
-          <span>Gateway 2: Google Workspace SMTP (Paid)</span>
-        </span>
-        <button type="button" onclick="testGoogleSmtp()" class="text-xs text-sky-400 hover:underline font-semibold">
-          Test Connection
-        </button>
-      </div>
-
-      <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
-        <div class="sm:col-span-2">
-          <label class="block text-[11px] font-semibold text-slate-400 mb-1">Host</label>
-          <input type="text" id="cfg-google-host" name="google_smtp_host" value="<?= e(get_setting('google_smtp_host', 'smtp.gmail.com')) ?>" class="w-full px-3 py-2 input-field font-mono text-xs">
-        </div>
-        <div>
-          <label class="block text-[11px] font-semibold text-slate-400 mb-1">Port</label>
-          <input type="number" id="cfg-google-port" name="google_smtp_port" value="<?= e(get_setting('google_smtp_port', '465')) ?>" class="w-full px-3 py-2 input-field font-mono text-xs">
-        </div>
-        <div>
-          <label class="block text-[11px] font-semibold text-slate-400 mb-1">Security</label>
-          <input type="text" readonly value="SSL / TLS" class="w-full px-3 py-2 input-field text-slate-500 text-xs">
-        </div>
-        <div class="sm:col-span-2">
-          <label class="block text-[11px] font-semibold text-slate-400 mb-1">Google Workspace Account</label>
-          <input type="email" id="cfg-google-user" name="google_smtp_user" value="<?= e(get_setting('google_smtp_user', '')) ?>" class="w-full px-3 py-2 input-field font-mono text-xs" placeholder="grants@teslaenergyfoundation.com">
-        </div>
-        <div class="sm:col-span-2">
-          <label class="block text-[11px] font-semibold text-slate-400 mb-1">16-Char Google App Password</label>
-          <input type="password" id="cfg-google-pass" name="google_smtp_pass" class="w-full px-3 py-2 input-field font-mono text-xs" placeholder="<?= get_setting('google_smtp_pass') ? '•••••••••••••••• (Leave blank to keep unchanged)' : 'Enter 16-character App Password' ?>">
-        </div>
-      </div>
-      <div id="google-feedback" class="text-xs font-mono hidden"></div>
-    </div>
-
-    <!-- Dual Ratio Slider -->
-    <div class="p-5 rounded-xl bg-[#080a0f] border border-brand-border space-y-2">
-      <label class="block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Load Balancing Split Ratio</label>
-      <div class="flex items-center gap-4">
-        <input type="range" name="resend_ratio" min="10" max="90" value="<?= (int)get_setting('resend_ratio', '60') ?>"
-               oninput="document.getElementById('ratio-label').innerText = this.value + '% Resend / ' + (100 - this.value) + '% Google'"
-               class="flex-1 accent-brand-red h-2 bg-[#1b2233] rounded-lg">
-        <span id="ratio-label" class="font-mono text-xs font-bold text-white w-36 text-right"><?= get_setting('resend_ratio', '60') ?>% Resend / <?= 100 - (int)get_setting('resend_ratio', '60') ?>% Google</span>
-      </div>
-    </div>
-  </form>
-
-  <?php elseif ($view === 'dns'): ?>
-  <!-- ==============================================
-       VIEW 4: CLOUDFLARE DNS GUIDE
-       ============================================== -->
-  <div class="card p-6 max-w-5xl mx-auto space-y-5">
-    <div class="flex items-center justify-between pb-3 border-b border-brand-border">
-      <div>
-        <h2 class="text-xs font-bold uppercase tracking-wider text-white flex items-center gap-2">
-          <i class="fa-brands fa-cloudflare text-orange-400"></i>
-          <span>Cloudflare DNS Records for teslaenergyfoundation.com</span>
-        </h2>
-        <p class="text-xs text-slate-400 mt-0.5">Authorizes both Resend and Google Workspace while routing all replies to teslafoundationreward.com</p>
-      </div>
-      <a href="https://dash.cloudflare.com" target="_blank" class="px-3 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-semibold transition">
-        Open Cloudflare &rarr;
-      </a>
-    </div>
-
-    <div class="overflow-x-auto">
-      <table class="w-full text-left text-xs border-collapse font-mono">
-        <thead>
-          <tr class="border-b border-brand-border text-slate-400 uppercase tracking-wider text-[10px] font-sans">
-            <th class="py-3 px-3">Type</th>
-            <th class="py-3 px-3">Name / Host</th>
-            <th class="py-3 px-3">Content / Value</th>
-            <th class="py-3 px-3">Proxy Status</th>
-            <th class="py-3 px-3">Purpose</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-brand-border/60 text-slate-300">
-          <tr>
-            <td class="py-3 px-3"><span class="px-2 py-0.5 rounded bg-sky-950 text-sky-400 font-bold">TXT</span></td>
-            <td class="py-3 px-3 font-bold text-white">@</td>
-            <td class="py-3 px-3"><code class="bg-[#080a0f] px-2 py-1 rounded text-emerald-400">v=spf1 include:resend.com include:_spf.google.com ~all</code></td>
-            <td class="py-3 px-3 text-slate-400 font-sans">DNS Only (Grey Cloud)</td>
-            <td class="py-3 px-3 text-slate-400 font-sans">Authorizes Resend + Google Workspace</td>
-          </tr>
-          <tr>
-            <td class="py-3 px-3"><span class="px-2 py-0.5 rounded bg-sky-950 text-sky-400 font-bold">TXT</span></td>
-            <td class="py-3 px-3 font-bold text-white">_dmarc</td>
-            <td class="py-3 px-3"><code class="bg-[#080a0f] px-2 py-1 rounded text-emerald-400">v=DMARC1; p=quarantine; rua=mailto:dmarc@teslafoundationreward.com</code></td>
-            <td class="py-3 px-3 text-slate-400 font-sans">DNS Only (Grey Cloud)</td>
-            <td class="py-3 px-3 text-slate-400 font-sans">Protects domain from spoofing</td>
-          </tr>
-          <tr>
-            <td class="py-3 px-3"><span class="px-2 py-0.5 rounded bg-amber-950 text-amber-400 font-bold">CNAME</span></td>
-            <td class="py-3 px-3 font-bold text-white">resend._domainkey</td>
-            <td class="py-3 px-3"><code class="bg-[#080a0f] px-2 py-1 rounded text-slate-300">provided-by.resend.com</code></td>
-            <td class="py-3 px-3 text-slate-400 font-sans">DNS Only (Grey Cloud)</td>
-            <td class="py-3 px-3 text-slate-400 font-sans">Resend DKIM record</td>
-          </tr>
-          <tr>
-            <td class="py-3 px-3"><span class="px-2 py-0.5 rounded bg-sky-950 text-sky-400 font-bold">TXT</span></td>
-            <td class="py-3 px-3 font-bold text-white">google._domainkey</td>
-            <td class="py-3 px-3"><code class="bg-[#080a0f] px-2 py-1 rounded text-slate-300">v=DKIM1; k=rsa; p=YOUR_KEY</code></td>
-            <td class="py-3 px-3 text-slate-400 font-sans">DNS Only (Grey Cloud)</td>
-            <td class="py-3 px-3 text-slate-400 font-sans">Google Workspace DKIM record</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-  <?php endif; ?>
-
-</main>
+</div>
 
 <script>
 const TEMPLATES = <?= json_encode($templates) ?>;
@@ -840,124 +1226,78 @@ const TEMPLATES = <?= json_encode($templates) ?>;
 function loadTemplate(id) {
   const t = TEMPLATES.find(x => String(x.id) === String(id));
   if (t) {
-    document.getElementById('mailer-subject').value = t.subject;
-    document.getElementById('mailer-html-body').value = t.body_html;
-    const prev = document.getElementById('mailer-live-preview');
-    if (!prev.classList.contains('hidden')) {
-      prev.innerHTML = t.body_html;
-    }
+    document.getElementById('subject').value = t.subject;
+    document.getElementById('htmlBody').value = t.body_html;
+    updatePreview();
   }
 }
 
-function toggleBodyPreview() {
-  const p = document.getElementById('mailer-live-preview');
-  const t = document.getElementById('mailer-html-body');
-  if (p.classList.contains('hidden')) {
-    p.innerHTML = t.value;
-    p.classList.remove('hidden');
-  } else {
-    p.classList.add('hidden');
+function updatePreview() {
+  const f = document.getElementById('htmlPreview');
+  const txt = document.getElementById('htmlBody');
+  if (f && txt) {
+    const doc = f.contentDocument || f.contentWindow.document;
+    doc.open();
+    doc.write(txt.value || '<p style="color:#888;font-family:sans-serif;padding:20px;">No HTML body provided yet.</p>');
+    doc.close();
   }
 }
 
 function insertToken(tok) {
-  const t = document.getElementById('mailer-html-body');
+  const t = document.getElementById('htmlBody');
   const start = t.selectionStart;
   const end = t.selectionEnd;
   t.value = t.value.substring(0, start) + tok + t.value.substring(end);
   t.focus();
   t.selectionStart = t.selectionEnd = start + tok.length;
+  updatePreview();
 }
 
-function countRecipients() {
-  const val = document.getElementById('mailer-recipients').value.trim();
+function updateRecipientCount() {
+  const val = document.getElementById('recipients').value.trim();
   const lines = val ? val.split(/\r?\n/).filter(x => x.trim().length > 0) : [];
-  document.getElementById('recipient-counter').innerText = lines.length + ' recipients loaded';
+  const lbl = document.getElementById('recipient-count-label');
+  if (lbl) {
+    lbl.innerText = lines.length + ' recipient addresses loaded • Duplicates automatically filtered';
+  }
 }
 
-function insertSampleRecipients() {
+function insertSampleLeads() {
   const samples = [
     'alex.morgan@gmail.com,Alex Morgan,TEF-8921,$75,000',
     'marcus.vance@outlook.com,Marcus Vance,TEF-9310,$120,000',
     'elena.rostova@yahoo.com,Elena Rostova,TEF-4822,$75,000',
     'david.chen22@proton.me,David Chen,TEF-1109,$95,000'
   ];
-  const t = document.getElementById('mailer-recipients');
+  const t = document.getElementById('recipients');
   t.value = (t.value.trim() ? t.value.trim() + "\n" : "") + samples.join("\n");
-  countRecipients();
+  updateRecipientCount();
 }
 
-// Quick Test Dispatch
-async function sendQuickTest() {
-  const to = document.getElementById('quick-test-email').value.trim();
-  const fb = document.getElementById('quick-test-feedback');
-  if (!to) { alert('Please enter test recipient email'); return; }
+// Live Gateway Connectivity Checks
+async function runLiveCheck(provider) {
+  const resEl = document.getElementById('settings-check-res') || document.getElementById('live-check-res');
+  if (!resEl) return;
+  resEl.className = 'small mt-2 muted';
+  resEl.innerText = 'Connecting to ' + provider + '...';
+  resEl.classList.remove('hide');
 
-  fb.className = 'text-[11px] font-mono text-slate-400 block';
-  fb.innerText = 'Sending test via dual gateways...';
-
+  const action = provider === 'resend' ? 'test_resend' : 'test_google';
   const fd = new FormData();
-  fd.append('test_to', to);
-  fd.append('provider', 'auto_balance');
 
   try {
-    const res = await fetch('api.php?action=test_diagnostic', { method: 'POST', body: fd });
+    const res = await fetch('api.php?action=' + action, { method: 'POST', body: fd });
     const data = await res.json();
     if (data.ok) {
-      fb.className = 'text-[11px] font-mono text-emerald-400 block';
-      fb.innerText = '✓ Delivered via ' + data.provider + ' (ID: ' + data.id + ')';
+      resEl.className = 'small mt-2' + ' text-green';
+      resEl.innerText = '✓ ' + (data.message || 'Connected successfully!');
     } else {
-      fb.className = 'text-[11px] font-mono text-rose-400 block';
-      fb.innerText = '✗ Failed: ' + (data.error || 'Unknown error');
+      resEl.className = 'small mt-2' + ' text-red';
+      resEl.innerText = '✗ ' + (data.error || 'Connection failed.');
     }
   } catch (e) {
-    fb.className = 'text-[11px] font-mono text-rose-400 block';
-    fb.innerText = '✗ Error: ' + e.message;
-  }
-}
-
-// Settings Test Connections
-async function testResendKey() {
-  const key = document.getElementById('cfg-resend-key').value.trim();
-  const fb = document.getElementById('resend-feedback');
-  fb.className = 'text-xs font-mono text-slate-400 block';
-  fb.innerText = 'Verifying Resend API...';
-
-  const fd = new FormData();
-  fd.append('api_key', key);
-  const res = await fetch('api.php?action=test_resend', { method: 'POST', body: fd });
-  const d = await res.json();
-  if (d.ok) {
-    fb.className = 'text-xs font-mono text-emerald-400 block';
-    fb.innerText = '✓ ' + d.message;
-  } else {
-    fb.className = 'text-xs font-mono text-rose-400 block';
-    fb.innerText = '✗ ' + (d.error || 'Verification failed');
-  }
-}
-
-async function testGoogleSmtp() {
-  const host = document.getElementById('cfg-google-host').value.trim();
-  const port = document.getElementById('cfg-google-port').value.trim();
-  const user = document.getElementById('cfg-google-user').value.trim();
-  const pass = document.getElementById('cfg-google-pass').value.trim();
-  const fb = document.getElementById('google-feedback');
-  fb.className = 'text-xs font-mono text-slate-400 block';
-  fb.innerText = 'Testing Google Workspace SMTP connection...';
-
-  const fd = new FormData();
-  fd.append('host', host);
-  fd.append('port', port);
-  fd.append('user', user);
-  fd.append('pass', pass);
-  const res = await fetch('api.php?action=test_google', { method: 'POST', body: fd });
-  const d = await res.json();
-  if (d.ok) {
-    fb.className = 'text-xs font-mono text-emerald-400 block';
-    fb.innerText = '✓ ' + d.message;
-  } else {
-    fb.className = 'text-xs font-mono text-rose-400 block';
-    fb.innerText = '✗ ' + (d.error || 'Connection failed');
+    resEl.className = 'small mt-2 text-red';
+    resEl.innerText = '✗ Network error: ' + e.message;
   }
 }
 
@@ -973,7 +1313,7 @@ function toggleQueuePause() {
 
 function stopQueue() {
   queueStopped = true;
-  logQueue('[User] Dispatch queue stopped.');
+  logQueue('[User] Dispatch queue halted.');
 }
 
 function logQueue(msg) {
@@ -992,7 +1332,7 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 async function runBatchQueue(campId) {
-  logQueue(`Starting batch dispatcher for run #${campId}...`);
+  logQueue(`Starting batch queue for campaign #${campId}...`);
   let dispatched = 0;
 
   while (!queueStopped) {
@@ -1003,7 +1343,7 @@ async function runBatchQueue(campId) {
 
     const fd = new FormData();
     fd.append('campaign_id', campId);
-    fd.append('batch_size', 25);
+    fd.append('batch_size', <?= (int)get_setting('batch_size', '50') ?>);
 
     try {
       const res = await fetch('api.php?action=dispatch_chunk', { method: 'POST', body: fd });
@@ -1021,31 +1361,35 @@ async function runBatchQueue(campId) {
 
       document.getElementById('queue-progress-bar').style.width = pct + '%';
       document.getElementById('queue-pct-text').innerText = pct + '%';
-      document.getElementById('queue-status-text').innerText = `Sent: ${dispatched} | Remaining: ${rem}`;
+      document.getElementById('queue-status-text').innerText = `Dispatched: ${dispatched} | Remaining: ${rem}`;
 
       if (data.results) {
         for (const item of data.results) {
           if (item.status === 'sent') {
-            logQueue(`✓ [${item.provider}] Delivered to ${item.email}`);
+            logQueue(`✓ [${item.provider}] ${item.email}`);
           } else {
-            logQueue(`✗ [${item.provider}] Failed ${item.email}: ${item.error}`);
+            logQueue(`✗ [${item.provider}] ${item.email}: ${item.error}`);
           }
         }
       }
 
       if (data.completed || rem === 0) {
-        logQueue(`✓✓ Completed: All ${dispatched} emails dispatched successfully.`);
+        logQueue(`✓✓ Complete: All ${dispatched} recipients processed successfully.`);
         break;
       }
 
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, <?= (int)get_setting('delay_between_batches_ms', '1200') ?>));
     } catch (e) {
-      logQueue('Network error: ' + e.message + '. Retrying in 3s...');
+      logQueue('Network chunk retry: ' + e.message);
       await new Promise(r => setTimeout(r, 3000));
     }
   }
 }
 <?php endif; ?>
+
+window.addEventListener('DOMContentLoaded', () => {
+  if (document.getElementById('htmlPreview')) updatePreview();
+});
 </script>
 <?php endif; ?>
 
