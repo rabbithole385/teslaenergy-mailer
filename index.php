@@ -392,12 +392,12 @@ $googleConfigured = !empty($googleUser);
 
         <div class="field">
           <label for="ident">Authorized email or username</label>
-          <input class="input" id="ident" name="identifier" required autofocus placeholder="name@teslaenergyfoundation.com" autocomplete="username">
+          <input class="input" id="ident" name="identifier" required autofocus placeholder="service@teslaenergyfoundation.com" autocomplete="username">
         </div>
 
         <div class="field">
           <label for="pwd">Access password</label>
-          <input class="input" id="pwd" type="password" name="password" required placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢" autocomplete="current-password">
+          <input class="input" id="pwd" type="password" name="password" required placeholder="••••••••••••" autocomplete="current-password">
         </div>
 
         <button type="submit" class="btn btn-primary btn-block btn-lg" style="margin-top:18px;">
