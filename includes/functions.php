@@ -189,8 +189,12 @@ function init_schema(PDO $pdo, bool $isMySQL = false): void {
         set_setting('reply_to_email', 'support@teslafoundationreward.com');
     }
 
-    // Ensure reward response mailbox entries are categorized
-    $pdo->exec("UPDATE inbox_messages SET to_email = 'support@teslafoundationreward.com', category = 'reward_inbox' WHERE from_email IN ('alex.morgan@gmail.com', 'marcus.vance@outlook.com', 'elena.rostova@yahoo.com', 'david.chen22@proton.me') OR category = 'replies'");
+    // Default provider mode to Resend only (Google Workspace will connect later)
+    $googlePass = get_setting('google_smtp_pass', '');
+    if (empty($googlePass)) {
+        set_setting('provider_mode', 'resend_only');
+        set_setting('google_smtp_enabled', '0');
+    }
 
     // Seed templates if empty
     $tplCount = (int)$pdo->query('SELECT COUNT(*) FROM templates')->fetchColumn();
@@ -673,7 +677,15 @@ function send_resend_email(
     $ok = ($code >= 200 && $code < 300);
     $data = json_decode((string)$raw, true);
     $resendId = $data['id'] ?? '';
-    $errMsg = !$ok ? ($data['message'] ?? ($curlErr ?: "HTTP $code: $raw")) : '';
+    $errMsg = '';
+    if (!$ok) {
+        $rawErr = $data['message'] ?? ($curlErr ?: "HTTP $code: $raw");
+        if ($code === 401 || $code === 403 || stripos($rawErr, 'API key') !== false) {
+            $errMsg = "Resend API error: {$rawErr} — Please check https://resend.com/api-keys to ensure your API key has Sending permissions and is not suspended, or paste a new active key in Settings.";
+        } else {
+            $errMsg = "Resend error: " . $rawErr;
+        }
+    }
 
     return [
         'ok'       => $ok,
@@ -872,28 +884,27 @@ function send_dual_email(
     static $balanceCounter = 0;
     $balanceCounter++;
 
-    $mode = $preferredProvider ?: get_setting('provider_mode', 'auto_balance');
-    $resendRatio     = (int)get_setting('resend_ratio', '60');
+    $hasGooglePass = !empty(trim((string)get_setting('google_smtp_pass', env('SMTP_PASS', ''))));
+    $isGoogleEnabled = (get_setting('google_smtp_enabled', '0') === '1') && $hasGooglePass;
     $isResendEnabled = get_setting('resend_enabled', '1') === '1';
-    $isGoogleEnabled = get_setting('google_smtp_enabled', '1') === '1';
+    $resendRatio     = (int)get_setting('resend_ratio', '60');
 
-    $chosenProvider = 'resend';
-
-    if ($mode === 'resend_only') {
+    // If Google Workspace SMTP has no App Password, route directly via Resend
+    if (!$isGoogleEnabled || $preferredProvider === 'resend_only') {
+        $mode = 'resend_only';
         $chosenProvider = 'resend';
-    } elseif ($mode === 'google_only') {
-        $chosenProvider = 'google_workspace';
-    } elseif ($mode === 'auto_balance') {
-        if ($isResendEnabled && $isGoogleEnabled) {
+    } else {
+        $mode = $preferredProvider ?: get_setting('provider_mode', 'resend_only');
+        if ($mode === 'resend_only') {
+            $chosenProvider = 'resend';
+        } elseif ($mode === 'google_only') {
+            $chosenProvider = 'google_workspace';
+        } elseif ($mode === 'auto_balance') {
             $mod = ($balanceCounter + random_int(0, 99)) % 100;
             $chosenProvider = ($mod < $resendRatio) ? 'resend' : 'google_workspace';
-        } elseif ($isGoogleEnabled) {
-            $chosenProvider = 'google_workspace';
         } else {
             $chosenProvider = 'resend';
         }
-    } else { // failover
-        $chosenProvider = $isResendEnabled ? 'resend' : 'google_workspace';
     }
 
     $res = null;
@@ -904,7 +915,7 @@ function send_dual_email(
         $res = send_google_smtp_email($to, $subject, $htmlBody, $textBody, $fromName, $fromEmail, $replyTo, $cc, $bcc);
     }
 
-    // Auto Failover to alternate gateway if primary failed
+    // Auto Failover to alternate gateway only if both gateways are fully configured
     if (empty($res['ok']) && ($mode === 'auto_balance' || $mode === 'failover') && $isResendEnabled && $isGoogleEnabled) {
         $alternateProvider = ($chosenProvider === 'resend') ? 'google_workspace' : 'resend';
         if ($alternateProvider === 'resend') {

