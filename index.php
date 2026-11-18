@@ -406,44 +406,26 @@ $googleConfigured = !empty($googleUser);
           <div class="brand-mark">TE</div>
           <div class="brand-text">
             <b>Tesla Energy</b>
-            <span>Enterprise Dispatch</span>
+            <span>Business Mail</span>
           </div>
         </div>
 
         <div>
-          <div class="lede">High-throughput mailer engineered for
-            <span><?= e(get_setting('sending_domain', SENDING_DOMAIN)) ?></span>
+          <div class="lede" style="font-size:24px; font-weight:600; line-height:1.3; color:#ffffff;">
+            Tesla Energy Communications
           </div>
-          <ul class="points">
-            <li>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <path d="M20 6 9 17l-5-5" />
-              </svg>
-              <span>Dual Gateway Architecture: Resend Paid API + Google Workspace SMTP (6,000 / day).</span>
-            </li>
-            <li>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <path d="M20 6 9 17l-5-5" />
-              </svg>
-              <span>Inbound replies automatically routed to
-                <strong><?= e(get_setting('reply_to_email', DEFAULT_REPLY_TO)) ?></strong>.</span>
-            </li>
-            <li>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <path d="M20 6 9 17l-5-5" />
-              </svg>
-              <span>Comprehensive settings for gateways, ratios, throttling, and Cloudflare DNS.</span>
-            </li>
-          </ul>
+          <p class="muted" style="margin-top:8px; font-size:13.5px; line-height:1.6;">
+            Official internal communications and messaging portal. Authorized personnel only.
+          </p>
         </div>
 
-        <div class="small muted">&copy; <?= date('Y') ?> Tesla Energy Foundation &bull; Internal Mail Gateway</div>
+        <div class="small muted">&copy; <?= date('Y') ?> Tesla Energy Foundation. All rights reserved.</div>
       </aside>
 
       <main class="auth-main">
         <div class="auth-card">
-          <h1>Sign in to Mailer</h1>
-          <p class="sub">Enter your authorized account credentials to access the console.</p>
+          <h1>Sign in</h1>
+          <p class="sub">Enter your authorized account credentials to continue.</p>
 
           <?php if ($error): ?>
             <div class="flash flash-error"><?= e($error) ?></div>
@@ -453,14 +435,22 @@ $googleConfigured = !empty($googleUser);
             <?= csrf_field() ?>
             <input type="hidden" name="action" value="login">
 
-        <div class="field">
-          <label for="ident">Authorized email or username</label>
-          <input class="input" id="ident" name="identifier" required value="<?= e($_POST['identifier'] ?? 'service@teslaenergyfoundation.com') ?>" autocomplete="username">
-        </div>
+            <div class="field">
+              <label for="ident">Email address</label>
+              <input class="input" id="ident" name="identifier" required
+                value="<?= e($_POST['identifier'] ?? 'service@teslaenergyfoundation.com') ?>" autocomplete="username">
+            </div>
 
-        <div class="field">
-          <label for="pwd">Access password</label>
-          <input class="input" id="pwd" type="password" name="password" required autofocus placeholder="Enter access password" autocomplete="current-password">
+            <div class="field">
+              <label for="pwd">Password</label>
+              <input class="input" id="pwd" type="password" name="password" required autofocus
+                placeholder="Enter password" autocomplete="current-password">
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block btn-lg" style="margin-top:18px;">
+              Sign in
+            </button>
+          </form>
         </div>
       </main>
     </div>
@@ -1879,16 +1869,18 @@ $googleConfigured = !empty($googleUser);
                   </div>
                 </div>
 
-              <div class="row-2">
-                <div class="field">
-                  <label for="g_user">Workspace Account Email</label>
-                  <input class="input mono" id="g_user" name="google_smtp_user" value="<?= e(get_setting('google_smtp_user', 'service@teslaenergyfoundation.com')) ?>">
+                <div class="row-2">
+                  <div class="field">
+                    <label for="g_user">Workspace Account Email</label>
+                    <input class="input mono" id="g_user" name="google_smtp_user"
+                      value="<?= e(get_setting('google_smtp_user', 'service@teslaenergyfoundation.com')) ?>">
+                  </div>
+                  <div class="field">
+                    <label for="g_pass">16-Character App Password</label>
+                    <input class="input mono" id="g_pass" type="password" name="google_smtp_pass"
+                      placeholder="<?= get_setting('google_smtp_pass') ? '••••••••••••••••' : 'Enter App Password' ?>">
+                  </div>
                 </div>
-                <div class="field">
-                  <label for="g_pass">16-Character App Password</label>
-                  <input class="input mono" id="g_pass" type="password" name="google_smtp_pass" placeholder="<?= get_setting('google_smtp_pass') ? '••••••••••••••••' : 'Enter App Password' ?>">
-                </div>
-              </div>
             </div>
 
           <?php elseif ($view === 'dns'): ?>
