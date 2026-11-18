@@ -8,15 +8,15 @@ require_once __DIR__ . '/includes/functions.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
-// Require authentication for all API endpoints
-if (!is_authed()) {
+$action = $_GET['action'] ?? $_POST['action'] ?? '';
+$pdo = db();
+
+// Require authentication for all API endpoints except public inbound webhook
+if ($action !== 'inbound_webhook' && !is_authed()) {
     http_response_code(401);
     echo json_encode(['success' => false, 'error' => 'Authentication required.']);
     exit;
 }
-
-$action = $_GET['action'] ?? $_POST['action'] ?? '';
-$pdo = db();
 
 switch ($action) {
 
@@ -226,6 +226,7 @@ switch ($action) {
         $resendSent = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE status = 'sent' AND provider = 'resend'")->fetchColumn();
         $googleSent = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE status = 'sent' AND provider = 'google_workspace'")->fetchColumn();
 
+        $inboxStats = get_inbox_stats();
         echo json_encode([
             'success'     => true,
             'totalSent'   => $totalSent,
@@ -233,8 +234,64 @@ switch ($action) {
             'todaySent'   => $todaySent,
             'resendSent'  => $resendSent,
             'googleSent'  => $googleSent,
-            'dailyTarget' => 6000
+            'dailyTarget' => 6000,
+            'inboxTotal'  => $inboxStats['total'],
+            'inboxUnread' => $inboxStats['unread']
         ]);
+        break;
+
+    // 6. Inbox Management Actions
+    case 'mark_inbox_read':
+        $id = (int)($_POST['id'] ?? 0);
+        if ($id > 0) mark_inbox_read($id, true);
+        echo json_encode(['success' => true]);
+        break;
+
+    case 'mark_all_inbox_read':
+        mark_all_inbox_read();
+        echo json_encode(['success' => true]);
+        break;
+
+    case 'delete_inbox_msg':
+        $id = (int)($_POST['id'] ?? 0);
+        if ($id > 0) delete_inbox_message($id);
+        echo json_encode(['success' => true]);
+        break;
+
+    case 'get_inbox_msg':
+        $id = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
+        $st = $pdo->prepare('SELECT * FROM inbox_messages WHERE id = ?');
+        $st->execute([$id]);
+        $msg = $st->fetch();
+        if ($msg) {
+            mark_inbox_read($id, true);
+            echo json_encode(['success' => true, 'message' => $msg]);
+        } else {
+            echo json_encode(['success' => false, 'error' => 'Message not found']);
+        }
+        break;
+
+    // 7. Inbound Webhook (Cloudflare Email Routing / External receiver)
+    case 'inbound_webhook':
+        $raw = file_get_contents('php://input');
+        $data = json_decode($raw, true) ?: $_POST;
+
+        $from = clean($data['from'] ?? $data['sender'] ?? '', 120);
+        $fromName = clean($data['from_name'] ?? explode('@', $from)[0] ?? '', 120);
+        $to = clean($data['to'] ?? $data['recipient'] ?? DEFAULT_REPLY_TO, 120);
+        $subject = clean($data['subject'] ?? 'Inbound Reply', 255);
+        $html = (string)($data['html'] ?? $data['body_html'] ?? '');
+        $text = (string)($data['text'] ?? $data['body_text'] ?? strip_tags($html));
+        $snippet = mb_substr(strip_tags($text ?: $html), 0, 160);
+        $msgId = clean($data['message_id'] ?? ('<in-' . time() . '.' . bin2hex(random_bytes(6)) . '@' . SENDING_DOMAIN . '>'), 150);
+
+        if ($from && filter_var($from, FILTER_VALIDATE_EMAIL)) {
+            $ins = $pdo->prepare('INSERT INTO inbox_messages (message_id, from_name, from_email, to_email, subject, body_html, body_text, snippet, is_read, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, "replies")');
+            $ins->execute([$msgId, $fromName, $from, $to, $subject, $html, $text, $snippet]);
+            echo json_encode(['success' => true, 'id' => (int)$pdo->lastInsertId()]);
+        } else {
+            echo json_encode(['success' => false, 'error' => 'Missing sender email']);
+        }
         break;
 
     default:

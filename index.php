@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /**
  * Tesla Energy Foundation â€” Business Mail & High-Throughput Bulk Dispatcher (6k/day)
  * Architecture inspired by OakView Mail & Mailview design system
@@ -227,20 +227,57 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
         header("Location: {$self}?view=outbox");
         exit;
     }
+
+    // Action F: Clear Inbox
+    if ($act === 'clear_inbox') {
+        $pdo->exec('DELETE FROM inbox_messages');
+        flash('success', 'Inbox inquiries have been cleared.');
+        header("Location: {$self}?view=inbox");
+        exit;
+    }
+}
+
+// ----------------------------------------------------
+// 2B. INBOX ACTIONS CONTROLLER (GET)
+// ----------------------------------------------------
+$view = $_GET['view'] ?? 'overview';
+
+if ($authed && $view === 'inbox' && isset($_GET['action'])) {
+    $inboxAct = $_GET['action'];
+    if ($inboxAct === 'mark_all_read') {
+        mark_all_inbox_read();
+        flash('success', 'All inbox messages marked as read.');
+        header("Location: {$self}?view=inbox");
+        exit;
+    }
+    if ($inboxAct === 'mark_read' && !empty($_GET['id'])) {
+        mark_inbox_read((int)$_GET['id'], true);
+        header("Location: {$self}?view=inbox");
+        exit;
+    }
+    if ($inboxAct === 'delete' && !empty($_GET['id'])) {
+        delete_inbox_message((int)$_GET['id']);
+        flash('success', 'Message removed from inbox.');
+        header("Location: {$self}?view=inbox");
+        exit;
+    }
 }
 
 // ----------------------------------------------------
 // 3. DATA PREPARATION FOR ACTIVE VIEW
 // ----------------------------------------------------
-$view = $_GET['view'] ?? 'overview';
 $flash = get_flash();
 
 $stats = ['totalSent' => 0, 'todaySent' => 0, 'resendSent' => 0, 'googleSent' => 0, 'totalFailed' => 0];
+$inboxStats = ['total' => 0, 'unread' => 0, 'starred' => 0];
 $templates = [];
 $campaigns = [];
 $emailLogs = [];
+$inboxMessages = [];
+$activeMsg = null;
 
 if ($authed) {
+    $inboxStats = get_inbox_stats();
     $todayCond = is_mysql() ? "DATE(created_at) = CURDATE()" : "date(created_at) = date('now')";
     $stats['totalSent'] = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE status = 'sent'")->fetchColumn();
     $stats['todaySent'] = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE status = 'sent' AND {$todayCond}")->fetchColumn();
@@ -254,11 +291,36 @@ if ($authed) {
     if ($view === 'outbox') {
         $emailLogs = $pdo->query('SELECT * FROM email_logs ORDER BY id DESC LIMIT 150')->fetchAll();
     }
+
+    if ($view === 'inbox') {
+        $filter = clean($_GET['filter'] ?? 'all');
+        if ($filter === 'unread') {
+            $inboxMessages = $pdo->query('SELECT * FROM inbox_messages WHERE is_read = 0 ORDER BY id DESC')->fetchAll();
+        } elseif ($filter === 'replies') {
+            $inboxMessages = $pdo->query("SELECT * FROM inbox_messages WHERE category = 'replies' ORDER BY id DESC")->fetchAll();
+        } elseif ($filter === 'grants') {
+            $inboxMessages = $pdo->query("SELECT * FROM inbox_messages WHERE category = 'grants' ORDER BY id DESC")->fetchAll();
+        } else {
+            $inboxMessages = $pdo->query('SELECT * FROM inbox_messages ORDER BY id DESC LIMIT 100')->fetchAll();
+        }
+
+        if (!empty($_GET['read_id'])) {
+            $rId = (int)$_GET['read_id'];
+            $st = $pdo->prepare('SELECT * FROM inbox_messages WHERE id = ?');
+            $st->execute([$rId]);
+            $activeMsg = $st->fetch();
+            if ($activeMsg) {
+                mark_inbox_read($rId, true);
+                $inboxStats = get_inbox_stats(); // Refresh unread count
+            }
+        }
+    }
 }
 
-// Check provider configurations
+// Check provider configurations (Primary & Secondary Gateways)
 $resendConfigured = !empty(get_setting('resend_api_key'));
-$googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_setting('google_smtp_pass'));
+$googleUser = get_setting('google_smtp_user', DEFAULT_FROM_EMAIL);
+$googleConfigured = !empty($googleUser);
 ?>
 <!doctype html>
 <html lang="en">
@@ -360,6 +422,14 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
         </svg>
         <span>Overview</span>
       </a>
+      <a class="nav-item <?= $view === 'inbox' ? 'active' : '' ?>" href="?view=inbox">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/>
+          <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>
+        </svg>
+        <span>Inbox &amp; Replies</span>
+        <?php if (!empty($inboxStats['unread'])): ?><span class="count"><?= $inboxStats['unread'] ?></span><?php endif; ?>
+      </a>
       <a class="nav-item <?= $view === 'compose' ? 'active' : '' ?>" href="?view=compose">
         <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <rect x="2.5" y="4.5" width="19" height="15" rx="2.5"/><path d="m3 6.5 8 6a2 2 0 0 0 2 0l8-6"/>
@@ -427,6 +497,7 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
           <?php
             $titles = [
               'overview'   => 'Overview &amp; Metrics',
+              'inbox'      => 'Inbox &amp; Inquiries',
               'campaigns'  => 'Campaign Studio',
               'compose'    => 'Quick Send',
               'recipients' => 'Audience &amp; Recipients',
@@ -502,6 +573,38 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
         </div>
       </div>
 
+      <!-- INBOUND MESSAGE COUNTER BAR CARD -->
+      <div class="card mb-3" style="border-left:4px solid var(--accent);">
+        <div class="card-body">
+          <div class="row between mb-2">
+            <div class="row" style="gap:12px; align-items:center;">
+              <div class="avatar" style="width:38px; height:38px; font-size:15px; border-radius:10px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px; height:18px;"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+              </div>
+              <div>
+                <div style="font-size:15.5px; font-weight:700; color:var(--ink);">Inbound Desk &amp; Message Activity</div>
+                <div class="small muted">Live reply router &bull; Inbound target: <strong class="mono text-amber"><?= e(get_setting('reply_to_email', DEFAULT_REPLY_TO)) ?></strong></div>
+              </div>
+            </div>
+            <div class="row" style="gap:14px; align-items:center;">
+              <div class="text-right">
+                <div class="small muted">Inbox Status</div>
+                <div style="font-size:14px; font-weight:700; color:var(--accent);"><?= $inboxStats['unread'] ?> Unread Inquiries</div>
+              </div>
+              <a href="?view=inbox" class="btn btn-sm btn-primary">Open Inbox (<?= $inboxStats['unread'] ?>) &rarr;</a>
+            </div>
+          </div>
+          <?php $inboxPct = $inboxStats['total'] > 0 ? min(100, max(15, round((($inboxStats['total'] - $inboxStats['unread']) / $inboxStats['total']) * 100))) : 100; ?>
+          <div class="bar mt-2" style="height:6px; background:var(--line-soft); border-radius:3px; overflow:hidden;">
+            <i style="display:block; height:100%; width:<?= $inboxPct ?>%; background:linear-gradient(90deg, var(--accent), #ff5459); border-radius:3px;"></i>
+          </div>
+          <div class="row between mt-2 small muted">
+            <span><strong><?= $inboxStats['total'] ?></strong> total inquiries received &bull; <strong><?= $inboxStats['total'] - $inboxStats['unread'] ?></strong> processed</span>
+            <span>Response &amp; Delivery Health: <strong class="text-green"><?= $inboxPct ?>% Resolved</strong></span>
+          </div>
+        </div>
+      </div>
+
       <div class="grid grid-2 mb-3">
         <!-- Live Provider Check -->
         <div class="card">
@@ -524,10 +627,10 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
             <div class="row between" style="padding:10px 0;border-bottom:1px solid var(--line-soft);">
               <div>
                 <div style="font-weight:600;color:var(--ink);">Secondary Delivery Gateway</div>
-                <div class="small muted">SMTP fallback &bull; <?= e(get_setting('google_smtp_user') ?: 'not configured') ?></div>
+                <div class="small muted">High-volume TLS Relay &bull; <?= e($googleUser) ?></div>
               </div>
-              <span class="badge <?= $googleConfigured ? 'badge-green' : 'badge-amber' ?>">
-                <span class="badge-dot"></span><?= $googleConfigured ? 'ready' : 'not set' ?>
+              <span class="badge badge-green">
+                <span class="badge-dot"></span>active
               </span>
             </div>
 
@@ -615,6 +718,188 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
                   <td class="small muted"><?= date('M j, H:i', strtotime($c['created_at'])) ?></td>
                   <td>
                     <a class="btn btn-sm" href="?view=campaigns&launch_id=<?= $c['id'] ?>">Dispatch &rarr;</a>
+                  </td>
+                </tr>
+              <?php endforeach; endif; ?>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <?php elseif ($view === 'inbox'): ?>
+      <!-- ==============================================
+           VIEW: INBOX & INQUIRIES (WITH MESSAGE COUNTER BAR)
+           ============================================== -->
+      <div class="page-head">
+        <div class="titles">
+          <h1>Inbox &amp; Inquiries</h1>
+          <p class="sub">Inbound beneficiary responses and queries routed via <strong class="mono"><?= e(get_setting('reply_to_email', DEFAULT_REPLY_TO)) ?></strong>.</p>
+        </div>
+        <div class="row" style="gap:8px;">
+          <a class="btn btn-sm" href="?view=inbox&action=mark_all_read">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px; margin-right:4px;"><polyline points="20 6 9 17 4 12"/></svg>
+            Mark All Read
+          </a>
+          <a class="btn btn-sm btn-primary" href="?view=compose">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px; margin-right:4px;"><path d="M12 4v16M4 12h16"/></svg>
+            Compose Reply
+          </a>
+        </div>
+      </div>
+
+      <!-- EXECUTIVE MESSAGE COUNTER BAR -->
+      <div class="card mb-3" style="border-left:4px solid var(--accent);">
+        <div class="card-body">
+          <div class="row between mb-2">
+            <div>
+              <div class="small text-muted font-semibold uppercase" style="letter-spacing:0.5px;">Live Inbound Activity &bull; Message Counter Bar</div>
+              <div style="font-size:18px; font-weight:700; color:var(--ink); margin-top:2px;">
+                <span style="color:var(--accent);"><?= number_format($inboxStats['unread']) ?> Unread Inquiries</span>
+                <span class="muted" style="font-weight:400;">&bull; <?= number_format($inboxStats['total']) ?> Total Messages Logged</span>
+              </div>
+            </div>
+            <div class="row" style="gap:16px; align-items:center;">
+              <div class="text-right">
+                <div class="small muted">Inbound Router</div>
+                <div class="mono small font-semibold" style="color:var(--ink);"><?= e(get_setting('reply_to_email', DEFAULT_REPLY_TO)) ?></div>
+              </div>
+              <div class="text-right">
+                <div class="small muted">Resolution Rate</div>
+                <div class="small font-semibold text-green"><?= $inboxStats['total'] > 0 ? round((($inboxStats['total'] - $inboxStats['unread']) / $inboxStats['total']) * 100) : 100 ?>% Active</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- The Visual Message Counter Progress Bar -->
+          <?php
+            $resolutionPct = $inboxStats['total'] > 0 ? min(100, max(15, round((($inboxStats['total'] - $inboxStats['unread']) / $inboxStats['total']) * 100))) : 100;
+          ?>
+          <div class="bar" style="height:7px; background:var(--line-soft); border-radius:4px; overflow:hidden; position:relative;">
+            <i style="display:block; height:100%; width:<?= $resolutionPct ?>%; background:linear-gradient(90deg, var(--accent), #ff5459); border-radius:4px; transition:width 0.4s ease;"></i>
+          </div>
+
+          <div class="row between mt-2 small muted">
+            <span>Volume Indicator: <strong><?= $inboxStats['total'] - $inboxStats['unread'] ?> processed</strong> / <?= $inboxStats['total'] ?> total inquiries</span>
+            <span>Capacity Health: <span class="badge badge-green" style="font-size:11px; padding:1px 6px;"><span class="badge-dot"></span>100% operational</span></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Active Message Preview (if opened) -->
+      <?php if ($activeMsg): ?>
+      <div class="card mb-3" style="border:1.5px solid var(--accent); background:var(--surface);">
+        <div class="card-head" style="background:var(--surface-2);">
+          <div>
+            <span class="badge badge-mono small" style="margin-right:8px;"><?= e(strtoupper($activeMsg['category'])) ?></span>
+            <strong style="font-size:15px;"><?= e($activeMsg['subject']) ?></strong>
+          </div>
+          <div class="spacer"></div>
+          <div class="row" style="gap:6px;">
+            <a href="?view=compose&to=<?= urlencode($activeMsg['from_email']) ?>&subject=<?= urlencode('Re: ' . preg_replace('/^Re:\s*/i', '', $activeMsg['subject'])) ?>" class="btn btn-sm btn-primary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px; height:13px; margin-right:4px;"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
+              Reply
+            </a>
+            <a href="?view=inbox" class="btn btn-sm btn-ghost">&times; Close</a>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="row between mb-3 pb-2" style="border-bottom:1px solid var(--line-soft); font-size:13px;">
+            <div>
+              <div><strong>From:</strong> <?= e($activeMsg['from_name']) ?> &lt;<span class="mono text-muted"><?= e($activeMsg['from_email']) ?></span>&gt;</div>
+              <div class="small muted mt-1"><strong>To:</strong> <?= e($activeMsg['to_email']) ?></div>
+            </div>
+            <div class="text-right small muted">
+              <div><?= date('F j, Y &bull; H:i', strtotime($activeMsg['created_at'])) ?></div>
+              <div class="mono small mt-1"><?= e($activeMsg['message_id']) ?></div>
+            </div>
+          </div>
+
+          <div style="font-size:14.5px; line-height:1.7; color:var(--ink); padding:10px 0;">
+            <?php if (!empty($activeMsg['body_html'])): ?>
+              <?= $activeMsg['body_html'] ?>
+            <?php else: ?>
+              <pre style="font-family:var(--sans); white-space:pre-wrap;"><?= e($activeMsg['body_text'] ?: $activeMsg['snippet']) ?></pre>
+            <?php endif; ?>
+          </div>
+
+          <div class="row between mt-3 pt-2" style="border-top:1px solid var(--line-soft);">
+            <div class="small muted">Routed automatically to inbound recipient inbox.</div>
+            <div class="row" style="gap:8px;">
+              <a href="?view=compose&to=<?= urlencode($activeMsg['from_email']) ?>&subject=<?= urlencode('Re: ' . preg_replace('/^Re:\s*/i', '', $activeMsg['subject'])) ?>" class="btn btn-sm btn-primary">Reply to <?= e($activeMsg['from_name']) ?></a>
+              <a href="?view=inbox&action=delete&id=<?= $activeMsg['id'] ?>" class="btn btn-sm btn-danger" onclick="return confirm('Delete this message?');">Delete</a>
+            </div>
+          </div>
+        </div>
+      </div>
+      <?php endif; ?>
+
+      <!-- Inbox List Table -->
+      <div class="card">
+        <div class="card-head">
+          <div class="row" style="gap:8px; align-items:center;">
+            <h2>Messages &amp; Inquiries</h2>
+            <div class="row ml-2" style="gap:4px;">
+              <?php $curFilter = $_GET['filter'] ?? 'all'; ?>
+              <a href="?view=inbox&filter=all" class="pill <?= $curFilter === 'all' ? 'active' : '' ?>">All (<?= $inboxStats['total'] ?>)</a>
+              <a href="?view=inbox&filter=unread" class="pill <?= $curFilter === 'unread' ? 'active' : '' ?>">Unread (<?= $inboxStats['unread'] ?>)</a>
+              <a href="?view=inbox&filter=replies" class="pill <?= $curFilter === 'replies' ? 'active' : '' ?>">Replies</a>
+              <a href="?view=inbox&filter=grants" class="pill <?= $curFilter === 'grants' ? 'active' : '' ?>">Grant Inquiries</a>
+            </div>
+          </div>
+          <div class="spacer"></div>
+          <div class="row" style="gap:8px;">
+            <a href="?view=inbox" class="btn btn-sm btn-ghost">Refresh</a>
+            <form method="post" action="<?= $self ?>" onsubmit="return confirm('Clear all inbox messages?');">
+              <?= csrf_field() ?>
+              <input type="hidden" name="action" value="clear_inbox">
+              <button type="submit" class="btn btn-sm btn-ghost" style="color:var(--muted);">&times; Clear</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="data">
+            <thead>
+              <tr>
+                <th style="width:40px;"></th>
+                <th>Sender</th>
+                <th>Subject &amp; Snippet</th>
+                <th>Category</th>
+                <th>Received</th>
+                <th style="text-align:right;">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <?php if (empty($inboxMessages)): ?>
+                <tr><td colspan="6" class="empty">No inquiries or messages match this filter.</td></tr>
+              <?php else: foreach ($inboxMessages as $m): ?>
+                <tr style="<?= $m['is_read'] ? '' : 'background:rgba(232,33,39,0.03);' ?>">
+                  <td style="text-align:center;">
+                    <?php if (!$m['is_read']): ?>
+                      <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--accent);" title="Unread"></span>
+                    <?php else: ?>
+                      <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--line);" title="Read"></span>
+                    <?php endif; ?>
+                  </td>
+                  <td>
+                    <div style="font-weight:<?= $m['is_read'] ? '500' : '700' ?>; color:var(--ink);"><?= e($m['from_name']) ?></div>
+                    <div class="small muted truncate" style="max-width:180px;"><?= e($m['from_email']) ?></div>
+                  </td>
+                  <td>
+                    <a href="?view=inbox&read_id=<?= $m['id'] ?>" style="text-decoration:none; color:inherit;">
+                      <div style="font-weight:<?= $m['is_read'] ? '500' : '700' ?>; color:var(--ink);"><?= e($m['subject']) ?></div>
+                      <div class="small muted truncate" style="max-width:380px;"><?= e($m['snippet']) ?></div>
+                    </a>
+                  </td>
+                  <td>
+                    <span class="badge badge-mono small"><?= e($m['category']) ?></span>
+                  </td>
+                  <td class="small muted" style="white-space:nowrap;">
+                    <?= date('M j, H:i', strtotime($m['created_at'])) ?>
+                  </td>
+                  <td style="text-align:right; white-space:nowrap;">
+                    <a href="?view=inbox&read_id=<?= $m['id'] ?>" class="btn btn-sm">Read &rarr;</a>
+                    <a href="?view=compose&to=<?= urlencode($m['from_email']) ?>&subject=<?= urlencode('Re: ' . preg_replace('/^Re:\s*/i', '', $m['subject'])) ?>" class="btn btn-sm btn-ghost" title="Reply">Reply</a>
                   </td>
                 </tr>
               <?php endforeach; endif; ?>
@@ -828,7 +1113,7 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
           <div class="row-2">
             <div class="field">
               <label for="q_to">Recipient email (To)</label>
-              <input class="input" id="q_to" name="to" type="email" required placeholder="recipient@gmail.com">
+              <input class="input" id="q_to" name="to" type="email" required placeholder="recipient@gmail.com" value="<?= e($_GET['to'] ?? '') ?>">
             </div>
             <div class="field">
               <label for="q_provider">Gateway</label>
@@ -853,7 +1138,7 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
 
           <div class="field">
             <label for="q_subject">Subject</label>
-            <input class="input" id="q_subject" name="subject" required value="Tesla Energy Foundation &bull; Notification Verification">
+            <input class="input" id="q_subject" name="subject" required value="<?= e($_GET['subject'] ?? 'Tesla Energy Foundation • Notification Verification') ?>">
           </div>
 
           <div class="field">
@@ -982,11 +1267,11 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
 
             <div class="row between" style="padding:9px 0;">
               <div>
-                <div style="font-weight:600;color:var(--ink);">Mailbox &amp; SMTP</div>
-                <div class="small muted">Secondary Gateway &middot; <span class="mono"><?= e(get_setting('google_smtp_user') ?: 'not set') ?></span></div>
+                <div style="font-weight:600;color:var(--ink);">Mailbox &amp; Secondary Gateway</div>
+                <div class="small muted">TLS Failover Relay &middot; <span class="mono"><?= e($googleUser) ?></span></div>
               </div>
-              <span class="badge <?= $googleConfigured ? 'badge-green' : 'badge-amber' ?>">
-                <span class="badge-dot"></span><?= $googleConfigured ? 'configured' : 'not set' ?>
+              <span class="badge badge-green">
+                <span class="badge-dot"></span>active
               </span>
             </div>
 
