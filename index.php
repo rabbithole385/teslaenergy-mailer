@@ -604,7 +604,7 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
                   <td class="num" style="color:var(--red);"><?= number_format($c['failed_count']) ?></td>
                   <td><span class="badge badge-mono"><?= e($c['provider_mode']) ?></span></td>
                   <td>
-                    <span class="badge <?= $c['status'] === 'completed' ? 'badge-green' : 'badge-blue' ?>">
+                    <span class="badge <?= $c['status'] === 'completed' ? 'badge-green' : 'badge-red' ?>">
                       <span class="badge-dot"></span><?= e($c['status']) ?>
                     </span>
                   </td>
@@ -646,7 +646,7 @@ $googleConfigured = !empty(get_setting('google_smtp_user')) && !empty(get_settin
           <div class="progress mb-2">
             <i id="queue-progress-bar" style="width:0%;"></i>
           </div>
-          <div id="queue-terminal" class="textarea mono small" style="height:150px; background:#0b1118; color:#9ab5d5; overflow-y:auto; padding:10px;">
+          <div id="queue-terminal" class="textarea mono small" style="height:150px; background:#0e0607; color:#fca5a5; border:1px solid #331518; overflow-y:auto; padding:10px;">
             <div>[System] Initializing dual gateway router...</div>
           </div>
         </div>
