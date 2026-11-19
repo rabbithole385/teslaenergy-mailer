@@ -325,8 +325,8 @@ switch ($action) {
         $rawTo = $data['to'] ?? $data['recipient'] ?? DEFAULT_REPLY_TO;
         $to = clean(is_array($rawTo) ? implode(', ', $rawTo) : (string)$rawTo, 120);
         $subject = clean($data['subject'] ?? 'Inbound Reply', 255);
-        $html = (string)($data['html'] ?? $data['body_html'] ?? '');
-        $text = (string)($data['text'] ?? $data['body_text'] ?? strip_tags($html));
+        $html = (string)($data['html'] ?? $data['body_html'] ?? $data['stripped-html'] ?? '');
+        $text = (string)($data['text'] ?? $data['body_text'] ?? $data['stripped-text'] ?? $data['plain'] ?? strip_tags($html));
         $snippet = mb_substr(strip_tags($text ?: $html), 0, 160);
         $msgId = clean($data['message_id'] ?? ('<in-' . time() . '.' . bin2hex(random_bytes(6)) . '@' . SENDING_DOMAIN . '>'), 150);
 

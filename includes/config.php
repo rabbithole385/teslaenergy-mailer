@@ -33,10 +33,10 @@ date_default_timezone_set('America/New_York');
 define('APP_NAME', 'Tesla Energy Foundation Mailer');
 define('APP_VERSION', '2.0.0');
 define('SENDING_DOMAIN', env('SENDING_DOMAIN', 'teslaenergyfoundation.com'));
-define('REPLY_DOMAIN', env('REPLY_DOMAIN', 'teslafoundationreward.com'));
-define('DEFAULT_REPLY_TO', env('DEFAULT_REPLY_TO', 'support@teslafoundationreward.com'));
-define('REWARD_FROM_EMAIL', env('REWARD_FROM_EMAIL', 'support@teslafoundationreward.com'));
-define('REWARD_FROM_NAME', env('REWARD_FROM_NAME', 'Tesla Foundation Reward'));
+define('REPLY_DOMAIN', env('REPLY_DOMAIN', 'teslaenergyfoundation.com'));
+define('DEFAULT_REPLY_TO', env('DEFAULT_REPLY_TO', 'service@teslaenergyfoundation.com'));
+define('REWARD_FROM_EMAIL', env('REWARD_FROM_EMAIL', 'service@teslaenergyfoundation.com'));
+define('REWARD_FROM_NAME', env('REWARD_FROM_NAME', 'Tesla Energy Foundation'));
 define('DEFAULT_FROM_NAME', env('DEFAULT_FROM_NAME', 'Tesla Energy Foundation'));
 define('DEFAULT_FROM_EMAIL', env('DEFAULT_FROM_EMAIL', 'service@teslaenergyfoundation.com'));
 

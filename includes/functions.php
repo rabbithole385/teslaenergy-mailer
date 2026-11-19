@@ -183,11 +183,8 @@ function init_schema(PDO $pdo, bool $isMySQL = false): void {
         }
     }
 
-    // Inbound replies from clients route to the dedicated response mailbox
-    $currReplyTo = get_setting('reply_to_email');
-    if (empty($currReplyTo) || $currReplyTo === 'service@teslaenergyfoundation.com') {
-        set_setting('reply_to_email', 'support@teslafoundationreward.com');
-    }
+    // Inbound replies from clients route to the bulk mailer inbox at service@teslaenergyfoundation.com
+    set_setting('reply_to_email', 'service@teslaenergyfoundation.com');
 
     // Default provider mode to Resend only (Google Workspace will connect later)
     $googlePass = get_setting('google_smtp_pass', '');
@@ -640,9 +637,17 @@ function send_resend_email(
     $validCC         = parse_email_list($cc);
     $validBCC        = parse_email_list($bcc);
 
+    // If To is blank but BCC is specified, address To to sender so BCC addresses remain 100% blind & hidden
     if (empty($validRecipients)) {
-        return ['ok' => false, 'error' => 'No valid recipient email address specified.', 'provider' => 'resend'];
+        if (!empty($validBCC)) {
+            $validRecipients = [$finalFromEmail];
+        } else {
+            return ['ok' => false, 'error' => 'No valid recipient email address specified.', 'provider' => 'resend'];
+        }
     }
+
+    // Ensure BCC addresses are never leaked into visible To or CC lists
+    $validBCC = array_values(array_diff($validBCC, $validRecipients, $validCC));
 
     $payload = [
         'from'    => $finalFrom,
@@ -731,12 +736,20 @@ function send_google_smtp_email(
     $validCC         = parse_email_list($cc);
     $validBCC        = parse_email_list($bcc);
 
+    // If To is blank but BCC is specified, address To to sender so BCC addresses remain 100% blind & hidden
+    if (empty($validRecipients)) {
+        if (!empty($validBCC)) {
+            $validRecipients = [$finalFromEmail];
+        } else {
+            return ['ok' => false, 'error' => 'No valid recipient email address specified.', 'provider' => 'google_workspace'];
+        }
+    }
+
+    // Ensure BCC addresses are never leaked into visible To or CC lists
+    $validBCC = array_values(array_diff($validBCC, $validRecipients, $validCC));
+
     // RCPT TO must include To + CC + BCC
     $allRcpt = array_unique(array_merge($validRecipients, $validCC, $validBCC));
-
-    if (empty($validRecipients)) {
-        return ['ok' => false, 'error' => 'No valid recipient email address specified.', 'provider' => 'google_workspace'];
-    }
 
     $targetProto = ($port === 465) ? 'ssl://' : 'tcp://';
     $fp = @stream_socket_client($targetProto . "$host:$port", $errno, $errstr, 12, STREAM_CLIENT_CONNECT);

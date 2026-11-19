@@ -145,6 +145,7 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     $subject = clean($_POST['subject'] ?? '', 200) ?: ('Quick Test Dispatch — ' . date('H:i:s'));
     $bodyHtml = (string) ($_POST['html'] ?? '');
     $provider = clean($_POST['provider'] ?? 'auto_balance', 40);
+    $dispatchMode = clean($_POST['dispatch_mode'] ?? 'individual', 40);
 
     $validTo = parse_email_list($to);
     $validCC = parse_email_list($cc);
@@ -159,14 +160,16 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
       $replyToTarget = get_setting('reply_to_email', DEFAULT_REPLY_TO) ?: 'service@teslaenergyfoundation.com';
       $content = $bodyHtml ?: '<div style="font-family:Arial,sans-serif;padding:24px;border:1px solid #e2e8f0;border-radius:8px;"><h2>Tesla Energy Foundation</h2><p>This is an executive dispatch from your Tesla Energy mailer.</p><p><strong>Reply-To Target:</strong> ' . htmlspecialchars($replyToTarget) . '</p></div>';
 
-      if (count($validTo) > 1 && empty($validCC) && empty($validBCC)) {
-        // Multi-recipient dispatch (individual personalized delivery to each recipient in To)
+      // If user selected Individual 1-on-1 Mode OR provided multiple addresses in To/BCC
+      if ($dispatchMode === 'individual' && count($allTargets) > 1) {
+        // Individual 1-on-1 dispatch: Each recipient gets their own private email.
+        // No recipient sees any other recipient's address! 0% chance of BCC behaving like CC.
         $dispatched = 0;
         $failed = 0;
         $lastErr = '';
-        foreach ($validTo as $singleTo) {
+        foreach ($allTargets as $singleTo) {
           if (is_daily_quota_reached()) {
-            flash('warning', "Daily 6,000 email limit reached during batch. Sent {$dispatched} of " . count($validTo) . " messages.");
+            flash('warning', "Daily 6,000 email limit reached during batch. Sent {$dispatched} of " . count($allTargets) . " messages.");
             break;
           }
           $res = send_dual_email($singleTo, $subject, $content, strip_tags($content), '', '', $replyToTarget, $provider, null, '', '');
@@ -178,14 +181,17 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
           }
         }
         if ($dispatched > 0) {
-          flash('success', "Successfully dispatched {$dispatched} email" . ($dispatched > 1 ? 's' : '') . "! Today's counter updated (+{$dispatched})." . ($failed > 0 ? " ({$failed} failed: {$lastErr})" : ''));
+          flash('success', "Dispatched {$dispatched} private 1-on-1 email" . ($dispatched > 1 ? 's' : '') . " successfully! Each recipient received their own separate message. Counter updated (+{$dispatched})." . ($failed > 0 ? " ({$failed} failed: {$lastErr})" : ''));
         } else {
           flash('error', "Delivery failed for all recipients: {$lastErr}");
         }
       } else {
-        // Standard dispatch or BCC/CC dispatch (all recipients logged into counter)
-        $targetTo = !empty($validTo) ? $validTo[0] : (!empty($validCC) ? $validCC[0] : (!empty($validBCC) ? $validBCC[0] : DEFAULT_FROM_EMAIL));
-        $res = send_dual_email($targetTo, $subject, $content, strip_tags($content), '', '', $replyToTarget, $provider, null, $cc, $bcc);
+        // Standard single dispatch or Group BCC
+        // If To is empty, address To to the sender so BCC recipients remain 100% blind & hidden (never leaked into To header)
+        $targetTo = !empty($validTo) ? implode(', ', $validTo) : DEFAULT_FROM_EMAIL;
+        // Make sure BCC never includes targetTo
+        $cleanBCC = array_values(array_diff($validBCC, $validTo, $validCC));
+        $res = send_dual_email($targetTo, $subject, $content, strip_tags($content), '', '', $replyToTarget, $provider, null, $cc, implode(', ', $cleanBCC));
         if (!empty($res['ok'])) {
           $countTotal = count($allTargets);
           $destSummary = $countTotal > 1 ? ("{$countTotal} recipients (Batch)") : $targetTo;
@@ -603,7 +609,7 @@ $googleConfigured = !empty($googleUser);
               <path d="M12 20h9" />
               <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
             </svg>
-            <span>Quick Send / Test</span>
+            <span>Compose / Dispatch</span>
           </a>
 
           <a class="nav-item <?= $view === 'inbox' ? 'active' : '' ?>" href="?view=inbox">
@@ -612,7 +618,10 @@ $googleConfigured = !empty($googleUser);
               <polyline points="9 17 4 12 9 7" />
               <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
             </svg>
-            <span>General Inbound</span>
+            <span>Inbox &amp; Replies</span>
+            <?php if (!empty($inboxStats['unread'])): ?>
+              <span class="count" style="background:var(--accent); color:#ffffff; font-weight:700; border-radius:10px; padding:1px 7px;"><?= $inboxStats['unread'] ?></span>
+            <?php endif; ?>
           </a>
 
           <a class="nav-item <?= ($view === 'sent' || $view === 'outbox') ? 'active' : '' ?>" href="?view=sent">
@@ -1630,7 +1639,21 @@ $googleConfigured = !empty($googleUser);
                   </div>
                   <div class="field">
                     <label for="q_bcc">BCC <span class="muted small">(optional, comma-separated)</span></label>
-                    <input class="input mono" id="q_bcc" name="bcc" placeholder="bcc@example.com">
+                    <input class="input mono" id="q_bcc" name="bcc" placeholder="bcc1@gmail.com, bcc2@yahoo.com">
+                  </div>
+                </div>
+
+                <div class="field mb-3" style="background:var(--surface-2); padding:12px 16px; border-radius:8px; border:1px solid var(--line-soft);">
+                  <label style="font-weight:600; margin-bottom:6px; display:block;">Recipient Privacy &amp; Delivery Mode</label>
+                  <div class="row" style="gap:20px; flex-wrap:wrap;">
+                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px;">
+                      <input type="radio" name="dispatch_mode" value="individual" checked>
+                      <span><strong>Individual 1-on-1 (Recommended)</strong> &mdash; Sends separate, private emails. No recipient ever sees anyone else's address.</span>
+                    </label>
+                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px;">
+                      <input type="radio" name="dispatch_mode" value="group_bcc">
+                      <span><strong>Group with BCC</strong> &mdash; Single email with BCC recipients kept hidden.</span>
+                    </label>
                   </div>
                 </div>
 
@@ -2091,9 +2114,7 @@ $googleConfigured = !empty($googleUser);
     </div>
 
     <script>
-                            c        onst TEMPLATES = <?= json_encode($templates) ?>;
-
-      function loadTemplate(id) {
+                                                                  c        onst TEMPLATES = <?= json_encode($templates) ?>; function loadTemplate(id) {
         const t = TEMPLATES.find(x => String(x.id) === String(id));
         if (t) {
           document.getElementById('subject').value = t.subject;
