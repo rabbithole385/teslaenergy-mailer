@@ -1,6 +1,6 @@
 <?php
 /**
- * Tesla Energy Foundation Mailer — API Dispatch Controller
+ * TEF Mailer — API Dispatch Controller
  * Handles Asynchronous Bulk Batching, Live Testing, and System Actions
  */
 
@@ -206,16 +206,16 @@ switch ($action) {
             exit;
         }
 
-        $subject = '[DIAGNOSTIC TEST] Tesla Energy Foundation Mailer Live Check — ' . date('H:i:s');
+        $subject = '[DIAGNOSTIC TEST] TEF Mailer Live Check — ' . date('H:i:s');
         $html = '
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; background: #ffffff;">
           <div style="background: #0f1115; padding: 24px; text-align: center; border-bottom: 3px solid #e82127;">
-            <h2 style="color: #ffffff; margin: 0; font-size: 20px; letter-spacing: 2px;">TESLA ENERGY FOUNDATION</h2>
+            <h2 style="color: #ffffff; margin: 0; font-size: 20px; letter-spacing: 2px;">ENERGY FOUNDATION REWARD</h2>
             <p style="color: #94a3b8; font-size: 13px; margin: 6px 0 0;">Dual Gateway Live Diagnostic Verification</p>
           </div>
           <div style="padding: 24px; color: #334155; line-height: 1.6;">
             <p>Hello,</p>
-            <p>This is a live diagnostic verification dispatched from your <strong>Tesla Energy Foundation Mailer System</strong>.</p>
+            <p>This is a live diagnostic verification dispatched from your <strong>TEF Mailer System</strong>.</p>
             <div style="background: #f8fafc; border-left: 4px solid #e82127; padding: 12px 16px; border-radius: 4px; margin: 18px 0; font-size: 14px;">
               <strong>Sending Domain:</strong> ' . htmlspecialchars(get_setting('sending_domain', SENDING_DOMAIN)) . '<br>
               <strong>Inbound Reply Routing:</strong> ' . htmlspecialchars(get_setting('reply_to_email', DEFAULT_REPLY_TO)) . '<br>
@@ -225,7 +225,7 @@ switch ($action) {
             <p><strong>Reply-To Test:</strong> Click <em>Reply</em> in your email client to verify that your message directs straight to <code>' . htmlspecialchars(get_setting('reply_to_email', DEFAULT_REPLY_TO)) . '</code>.</p>
           </div>
           <div style="background: #f8fafc; padding: 14px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0;">
-            Tesla Energy Foundation &bull; teslaenergyfoundation.com
+            Energy Foundation Reward &bull; energyfoundationreward.com
           </div>
         </div>';
 

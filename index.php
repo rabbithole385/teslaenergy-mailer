@@ -1,6 +1,6 @@
 <?php
 /**
- * Tesla Energy Foundation â€” Business Mail & High-Throughput Bulk Dispatcher (6k/day)
+ * Energy Foundation Reward â€” Business Mail & High-Throughput Bulk Dispatcher (6k/day)
  * Architecture inspired by OakView Mail & Mailview design system
  */
 
@@ -157,8 +157,8 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     } elseif (is_daily_quota_reached()) {
       flash('error', 'Daily sending limit of 6,000 emails reached (' . number_format(get_today_sent_count()) . ' / 6,000). Sending has been halted automatically until tomorrow to preserve domain reputation.');
     } else {
-      $replyToTarget = get_setting('reply_to_email', DEFAULT_REPLY_TO) ?: 'service@teslaenergyfoundation.com';
-      $content = $bodyHtml ?: '<div style="font-family:Arial,sans-serif;padding:24px;border:1px solid #e2e8f0;border-radius:8px;"><h2>Tesla Energy Foundation</h2><p>This is an executive dispatch from your Tesla Energy mailer.</p><p><strong>Reply-To Target:</strong> ' . htmlspecialchars($replyToTarget) . '</p></div>';
+      $replyToTarget = get_setting('reply_to_email', DEFAULT_REPLY_TO) ?: 'service@energyfoundationreward.com';
+      $content = $bodyHtml ?: '<div style="font-family:Arial,sans-serif;padding:24px;border:1px solid #e2e8f0;border-radius:8px;"><h2>Energy Foundation Reward</h2><p>This is an executive dispatch from your TEF mailer.</p><p><strong>Reply-To Target:</strong> ' . htmlspecialchars($replyToTarget) . '</p></div>';
 
       // If user selected Individual 1-on-1 Mode OR provided multiple addresses in To/BCC
       if ($dispatchMode === 'individual' && count($allTargets) > 1) {
@@ -209,8 +209,8 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
   if ($act === 'simulate_inbound_reply') {
     $testSender = clean($_POST['test_sender'] ?? '', 120);
     $testName = clean($_POST['test_name'] ?? 'Beneficiary Response', 120);
-    $testSubj = clean($_POST['test_subject'] ?? 'Re: Tesla Clean Energy Grant Allocation Inquiry', 255);
-    $testBody = clean($_POST['test_body'] ?? 'Hello Tesla Energy Support, I received your grant notification and am writing to submit my verification documents.', 2000);
+    $testSubj = clean($_POST['test_subject'] ?? 'Re: TEF Clean Energy Grant Allocation Inquiry', 255);
+    $testBody = clean($_POST['test_body'] ?? 'Hello TEF Support, I received your grant notification and am writing to submit my verification documents.', 2000);
 
     if (empty($testSender) || !filter_var($testSender, FILTER_VALIDATE_EMAIL)) {
       $testSender = 'beneficiary.' . rand(100, 999) . '@gmail.com';
@@ -219,16 +219,16 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     $snippet = mb_substr($testBody, 0, 160);
     $msgId = '<reply-' . time() . '.' . bin2hex(random_bytes(4)) . '@' . SENDING_DOMAIN . '>';
     $ins = $pdo->prepare('INSERT INTO inbox_messages (message_id, from_name, from_email, to_email, subject, body_html, body_text, snippet, is_read, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, "replies")');
-    $ins->execute([$msgId, $testName, $testSender, 'service@teslaenergyfoundation.com', $testSubj, nl2br(htmlspecialchars($testBody)), $testBody, $snippet]);
+    $ins->execute([$msgId, $testName, $testSender, 'service@energyfoundationreward.com', $testSubj, nl2br(htmlspecialchars($testBody)), $testBody, $snippet]);
     flash('success', "Inbound reply received from {$testName} ({$testSender})! Logged in Inbox.");
     header("Location: {$self}?view=inbox");
     exit;
   }
 
-  // Action B3: 1-on-1 Direct Client Response (support@teslafoundationreward.com)
+  // Action B3: 1-on-1 Direct Client Response (support@energyfoundationreward.com)
   if ($act === 'send_reward_reply') {
     $to = clean($_POST['to'] ?? '', 120);
-    $subject = clean($_POST['subject'] ?? '', 200) ?: 'Tesla Foundation Reward • Communication';
+    $subject = clean($_POST['subject'] ?? '', 200) ?: 'TEF Foundation Reward • Communication';
     $bodyHtml = (string) ($_POST['html'] ?? '');
     $inboxMsgId = (int) ($_POST['inbox_id'] ?? 0);
 
@@ -238,15 +238,15 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
       exit;
     }
 
-    $content = $bodyHtml ?: '<div style="font-family:Arial,sans-serif;padding:20px;border:1px solid #e2e8f0;border-radius:8px;"><h2>Tesla Foundation Reward</h2><p>Thank you for your correspondence regarding your clean energy grant inquiry.</p><p>Our verification team has received your submission.</p><p>Regards,<br>Tesla Foundation Reward Desk<br>support@teslafoundationreward.com</p></div>';
+    $content = $bodyHtml ?: '<div style="font-family:Arial,sans-serif;padding:20px;border:1px solid #e2e8f0;border-radius:8px;"><h2>TEF Foundation Reward</h2><p>Thank you for your correspondence regarding your clean energy grant inquiry.</p><p>Our verification team has received your submission.</p><p>Regards,<br>TEF Foundation Reward Desk<br>support@energyfoundationreward.com</p></div>';
 
-    $res = send_dual_email($to, $subject, $content, strip_tags($content), 'Tesla Foundation Reward', 'support@teslafoundationreward.com', 'support@teslafoundationreward.com', 'auto_balance', null, '', '');
+    $res = send_dual_email($to, $subject, $content, strip_tags($content), 'TEF Foundation Reward', 'support@energyfoundationreward.com', 'support@energyfoundationreward.com', 'auto_balance', null, '', '');
 
     if (!empty($res['ok'])) {
       if ($inboxMsgId > 0) {
         mark_inbox_read($inboxMsgId, true);
       }
-      flash('success', "1-on-1 response dispatched to {$to} from support@teslafoundationreward.com! (ID: {$res['id']})");
+      flash('success', "1-on-1 response dispatched to {$to} from support@energyfoundationreward.com! (ID: {$res['id']})");
     } else {
       flash('error', "Failed to dispatch response: " . ($res['error'] ?? 'Delivery failed'));
     }
@@ -259,13 +259,13 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
   if ($act === 'simulate_reward_reply') {
     $testSender = clean($_POST['test_sender'] ?? '', 120) ?: ('client.' . rand(100, 999) . '@gmail.com');
     $testName = clean($_POST['test_name'] ?? 'Beneficiary Client', 120);
-    $testSubj = clean($_POST['test_subject'] ?? 'Re: Tesla Energy Foundation Grant Allocation Claim', 255);
+    $testSubj = clean($_POST['test_subject'] ?? 'Re: Energy Foundation Reward Grant Allocation Claim', 255);
     $testBody = clean($_POST['test_body'] ?? 'Hello Support Team, I am replying with our updated banking and allocation documents.', 2000);
 
     $snippet = mb_substr($testBody, 0, 160);
-    $msgId = '<client-reply-' . time() . '.' . bin2hex(random_bytes(4)) . '@teslafoundationreward.com>';
+    $msgId = '<client-reply-' . time() . '.' . bin2hex(random_bytes(4)) . '@energyfoundationreward.com>';
     $ins = $pdo->prepare('INSERT INTO inbox_messages (message_id, from_name, from_email, to_email, subject, body_html, body_text, snippet, is_read, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, "reward_inbox")');
-    $ins->execute([$msgId, $testName, $testSender, 'support@teslafoundationreward.com', $testSubj, nl2br(htmlspecialchars($testBody)), $testBody, $snippet]);
+    $ins->execute([$msgId, $testName, $testSender, 'support@energyfoundationreward.com', $testSubj, nl2br(htmlspecialchars($testBody)), $testBody, $snippet]);
     flash('success', "Inbound client inquiry from {$testName} received into Reward Mailbox!");
     header("Location: {$self}?view=reward_inbox");
     exit;
@@ -437,9 +437,9 @@ if ($authed) {
   if ($view === 'reward_inbox') {
     $filter = clean($_GET['filter'] ?? 'all');
     if ($filter === 'unread') {
-      $rewardMessages = $pdo->query("SELECT * FROM inbox_messages WHERE is_read = 0 AND (to_email LIKE '%teslafoundationreward.com%' OR category LIKE 'reward%') ORDER BY id DESC")->fetchAll();
+      $rewardMessages = $pdo->query("SELECT * FROM inbox_messages WHERE is_read = 0 AND (to_email LIKE '%energyfoundationreward.com%' OR category LIKE 'reward%') ORDER BY id DESC")->fetchAll();
     } else {
-      $rewardMessages = $pdo->query("SELECT * FROM inbox_messages WHERE to_email LIKE '%teslafoundationreward.com%' OR category LIKE 'reward%' ORDER BY id DESC LIMIT 100")->fetchAll();
+      $rewardMessages = $pdo->query("SELECT * FROM inbox_messages WHERE to_email LIKE '%energyfoundationreward.com%' OR category LIKE 'reward%' ORDER BY id DESC LIMIT 100")->fetchAll();
     }
 
     if (!empty($_GET['read_id'])) {
@@ -455,7 +455,7 @@ if ($authed) {
   }
 
   if ($view === 'reward_sent') {
-    $rewardSentLogs = $pdo->query("SELECT * FROM email_logs WHERE from_address LIKE '%teslafoundationreward.com%' ORDER BY id DESC LIMIT 100")->fetchAll();
+    $rewardSentLogs = $pdo->query("SELECT * FROM email_logs WHERE from_address LIKE '%energyfoundationreward.com%' ORDER BY id DESC LIMIT 100")->fetchAll();
   }
 }
 
@@ -471,7 +471,7 @@ $googleConfigured = !empty($googleUser);
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
-  <title>Tesla Energy &middot; Business Mail &amp; Dispatch</title>
+  <title>TEF &middot; Business Mail &amp; Dispatch</title>
   <link rel="stylesheet" href="assets/css/app.css?v=2.1">
 </head>
 
@@ -486,21 +486,21 @@ $googleConfigured = !empty($googleUser);
         <div class="brand">
           <div class="brand-mark">TE</div>
           <div class="brand-text">
-            <b>Tesla Energy</b>
+            <b>TEF</b>
             <span>Business Mail</span>
           </div>
         </div>
 
         <div>
           <div class="lede" style="font-size:24px; font-weight:600; line-height:1.3; color:#ffffff;">
-            Tesla Energy Communications
+            TEF Communications
           </div>
           <p class="muted" style="margin-top:8px; font-size:13.5px; line-height:1.6;">
             Official internal communications and messaging portal. Authorized personnel only.
           </p>
         </div>
 
-        <div class="small muted">&copy; <?= date('Y') ?> Tesla Energy Foundation. All rights reserved.</div>
+        <div class="small muted">&copy; <?= date('Y') ?> Energy Foundation Reward. All rights reserved.</div>
       </aside>
 
       <main class="auth-main">
@@ -519,7 +519,7 @@ $googleConfigured = !empty($googleUser);
             <div class="field">
               <label for="ident">Email address</label>
               <input class="input" id="ident" name="identifier" required
-                value="<?= e($_POST['identifier'] ?? 'service@teslaenergyfoundation.com') ?>" autocomplete="username">
+                value="<?= e($_POST['identifier'] ?? 'service@energyfoundationreward.com') ?>" autocomplete="username">
             </div>
 
             <div class="field">
@@ -546,7 +546,7 @@ $googleConfigured = !empty($googleUser);
         <div class="brand">
           <div class="brand-mark">TE</div>
           <div class="brand-text">
-            <b>Tesla Energy</b>
+            <b>TEF</b>
             <span>Business Mail (6k)</span>
           </div>
         </div>
@@ -756,7 +756,7 @@ $googleConfigured = !empty($googleUser);
                 'settings' => 'Settings &amp; Gateways',
                 'dns' => 'Cloudflare DNS Records'
               ];
-              echo $titles[$view] ?? 'Tesla Energy Mailer';
+              echo $titles[$view] ?? 'TEF Mailer';
               ?>
             </h1>
             <div class="sub">
@@ -960,9 +960,9 @@ $googleConfigured = !empty($googleUser);
                 </div>
                 <div class="card-body">
                   <p class="small muted mb-2">
-                    <strong>teslaenergyfoundation.com</strong> is configured for outbound dispatch and incoming replies.
+                    <strong>energyfoundationreward.com</strong> is configured for outbound dispatch and incoming replies.
                     All recipient replies are routed directly to
-                    <strong>service@teslaenergyfoundation.com</strong> via injected <span class="mono">Reply-To</span>
+                    <strong>service@energyfoundationreward.com</strong> via injected <span class="mono">Reply-To</span>
                     headers.
                   </p>
                   <div class="alert mb-2">
@@ -1103,7 +1103,7 @@ $googleConfigured = !empty($googleUser);
                 <div class="field">
                   <label>Message Content</label>
                   <textarea class="textarea" name="test_body" rows="3"
-                    required>Hello Tesla Energy Foundation, I received your clean energy grant notification and would like to confirm my allocation documents.</textarea>
+                    required>Hello Energy Foundation Reward, I received your clean energy grant notification and would like to confirm my allocation documents.</textarea>
                 </div>
                 <button type="submit" class="btn btn-primary btn-sm">Receive Inbound Test Message</button>
               </form>
@@ -1395,7 +1395,7 @@ $googleConfigured = !empty($googleUser);
                         <div class="field">
                           <label for="subject">Subject line</label>
                           <input class="input" id="subject" name="subject" required
-                            placeholder="OFFICIAL ALLOCATION: Tesla Energy Foundation Grant [Ref: {{ref_id}}]">
+                            placeholder="OFFICIAL ALLOCATION: Energy Foundation Reward Grant [Ref: {{ref_id}}]">
                         </div>
                         <div class="field">
                           <label for="reply_to">Reply-To (Inbound replies)</label>
@@ -1584,9 +1584,9 @@ $googleConfigured = !empty($googleUser);
                 <div class="mt-2 pt-2 row between small"
                   style="border-top:1px solid rgba(255,255,255,0.06); color:#94a3b8; font-size:11.5px;">
                   <span><strong>Sender:</strong> <span
-                      class="mono text-amber">service@teslaenergyfoundation.com</span></span>
+                      class="mono text-amber">service@energyfoundationreward.com</span></span>
                   <span><strong>Reply-To:</strong> <span
-                      class="mono text-green">service@teslaenergyfoundation.com</span></span>
+                      class="mono text-green">service@energyfoundationreward.com</span></span>
                 </div>
               </div>
             </div>
@@ -1660,7 +1660,7 @@ $googleConfigured = !empty($googleUser);
                 <div class="field">
                   <label for="q_subject">Subject</label>
                   <input class="input" id="q_subject" name="subject" required
-                    value="<?= e($_GET['subject'] ?? 'Tesla Energy Foundation • Notification Verification') ?>">
+                    value="<?= e($_GET['subject'] ?? 'Energy Foundation Reward • Notification Verification') ?>">
                 </div>
 
                 <div class="field">
@@ -1826,13 +1826,13 @@ $googleConfigured = !empty($googleUser);
                 <div class="card-body">
                   <p class="small muted mb-2">
                     Cloudflare Email Routing is <strong>forward-only</strong> infrastructure:
-                    emails sent by recipients to <strong>teslaenergyfoundation.com</strong> are cleanly directed to your
+                    emails sent by recipients to <strong>energyfoundationreward.com</strong> are cleanly directed to your
                     receiving mailbox at <strong><?= e(get_setting('reply_to_email', DEFAULT_REPLY_TO)) ?></strong>.
                   </p>
                   <div class="alert">
                     <strong>Unified Email Architecture</strong>
                     Dispatches and inbound recipient replies are unified on
-                    <strong>service@teslaenergyfoundation.com</strong>.
+                    <strong>service@energyfoundationreward.com</strong>.
                   </div>
                 </div>
               </div>
@@ -1937,7 +1937,7 @@ $googleConfigured = !empty($googleUser);
                         <label for="g_user">Workspace Account Email</label>
                         <input class="input mono" id="g_user" name="google_smtp_user"
                           value="<?= e(get_setting('google_smtp_user', '')) ?>"
-                          placeholder="service@teslaenergyfoundation.com">
+                          placeholder="service@energyfoundationreward.com">
                       </div>
                       <div class="field">
                         <label for="g_pass">16-Character App Password</label>
@@ -2028,7 +2028,7 @@ $googleConfigured = !empty($googleUser);
                   <div class="field">
                     <label for="g_user">Workspace Account Email</label>
                     <input class="input mono" id="g_user" name="google_smtp_user"
-                      value="<?= e(get_setting('google_smtp_user', 'service@teslaenergyfoundation.com')) ?>">
+                      value="<?= e(get_setting('google_smtp_user', 'service@energyfoundationreward.com')) ?>">
                   </div>
                   <div class="field">
                     <label for="g_pass">16-Character App Password</label>
@@ -2045,7 +2045,7 @@ $googleConfigured = !empty($googleUser);
             <div class="page-head">
               <div class="titles">
                 <h1>Cloudflare DNS Configuration</h1>
-                <p class="sub">Essential verification records for teslaenergyfoundation.com</p>
+                <p class="sub">Essential verification records for energyfoundationreward.com</p>
               </div>
               <div class="row">
                 <a class="btn btn-sm btn-primary" href="https://dash.cloudflare.com" target="_blank">Open Cloudflare
@@ -2056,7 +2056,7 @@ $googleConfigured = !empty($googleUser);
             <div class="card mb-3">
               <div class="card-body">
                 <p class="small muted mb-0">
-                  Add these records in your Cloudflare DNS zone for <strong>teslaenergyfoundation.com</strong>.
+                  Add these records in your Cloudflare DNS zone for <strong>energyfoundationreward.com</strong>.
                   Ensure proxy status is set to <strong>DNS Only (Grey Cloud)</strong> for SPF and DKIM.
                 </p>
               </div>
@@ -2085,7 +2085,7 @@ $googleConfigured = !empty($googleUser);
                     <tr>
                       <td><span class="badge badge-blue badge-mono">TXT</span></td>
                       <td><strong>_dmarc</strong></td>
-                      <td><span class="mono">v=DMARC1; p=quarantine; rua=mailto:dmarc@teslafoundationreward.com</span></td>
+                      <td><span class="mono">v=DMARC1; p=quarantine; rua=mailto:dmarc@energyfoundationreward.com</span></td>
                       <td class="small muted">DNS Only</td>
                       <td class="small muted">DMARC: Sender protection</td>
                     </tr>

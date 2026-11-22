@@ -16,7 +16,7 @@ for v in SENDING_DOMAIN REPLY_DOMAIN DEFAULT_REPLY_TO DEFAULT_FROM_NAME DEFAULT_
   eval "val=\${$v:-}"
   if [ -n "$val" ]; then VARS="$VARS $v"; fi
 done
-if [ -n "$VARS" ]; then echo "PassEnv$VARS" > /etc/apache2/conf-enabled/tesla-env.conf; fi
+if [ -n "$VARS" ]; then echo "PassEnv$VARS" > /etc/apache2/conf-enabled/tef-env.conf; fi
 
 # Railway volume mounted at $DATA_DIR (for SQLite mode)
 DATA_DIR="${DATA_DIR:-/data}"
