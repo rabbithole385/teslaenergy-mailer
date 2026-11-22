@@ -186,6 +186,36 @@ function init_schema(PDO $pdo, bool $isMySQL = false): void {
     // Inbound replies from clients route to the bulk mailer inbox at service@energyfoundationreward.com
     set_setting('reply_to_email', 'service@energyfoundationreward.com');
 
+    // Automatically sanitize and update settings if old domain or Tesla branding is stored in DB
+    $curFrom = get_setting('default_from_name');
+    if (stripos($curFrom, 'Tesla') !== false || empty($curFrom)) {
+        set_setting('default_from_name', 'TEF');
+    }
+    $curEmail = get_setting('default_from_email');
+    if (stripos($curEmail, 'tesla') !== false || empty($curEmail)) {
+        set_setting('default_from_email', 'service@energyfoundationreward.com');
+    }
+    $curDomain = get_setting('sending_domain');
+    if (stripos($curDomain, 'tesla') !== false || empty($curDomain)) {
+        set_setting('sending_domain', 'energyfoundationreward.com');
+    }
+
+    // Sanitize any existing templates or messages stored in database
+    try {
+        $pdo->exec("UPDATE templates SET 
+            name = REPLACE(REPLACE(name, 'Tesla Energy Foundation', 'Energy Foundation Reward'), 'Tesla', 'TEF'),
+            subject = REPLACE(REPLACE(subject, 'Tesla Energy Foundation', 'Energy Foundation Reward'), 'Tesla', 'TEF'),
+            body_html = REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(body_html, 'Tesla Energy Foundation', 'Energy Foundation Reward'), 'teslaenergyfoundation.com', 'energyfoundationreward.com'), 'teslafoundationreward.com', 'energyfoundationreward.com'), 'Tesla Energy', 'TEF'), 'Tesla', 'TEF')
+        ");
+        $pdo->exec("UPDATE inbox_messages SET 
+            subject = REPLACE(subject, 'Tesla', 'TEF'),
+            body_html = REPLACE(REPLACE(REPLACE(body_html, 'teslaenergyfoundation.com', 'energyfoundationreward.com'), 'teslafoundationreward.com', 'energyfoundationreward.com'), 'Tesla', 'TEF'),
+            snippet = REPLACE(snippet, 'Tesla', 'TEF'),
+            from_email = REPLACE(REPLACE(from_email, 'teslaenergyfoundation.com', 'energyfoundationreward.com'), 'teslafoundationreward.com', 'energyfoundationreward.com'),
+            to_email = REPLACE(REPLACE(to_email, 'teslaenergyfoundation.com', 'energyfoundationreward.com'), 'teslafoundationreward.com', 'energyfoundationreward.com')
+        ");
+    } catch (Throwable $dbCleanEx) {}
+
     // Default provider mode to Resend only (Google Workspace will connect later)
     $googlePass = get_setting('google_smtp_pass', '');
     if (empty($googlePass)) {
