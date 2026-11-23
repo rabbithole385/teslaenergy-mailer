@@ -234,6 +234,26 @@ function init_schema(PDO $pdo, bool $isMySQL = false): void {
         seed_templates($pdo);
     }
 
+    // Always sanitize templates on every boot — wipe any lingering Tesla branding from DB
+    try {
+        $pdo->exec("UPDATE templates SET
+            name     = REPLACE(REPLACE(REPLACE(name,
+                'Tesla Energy Foundation','Energy Foundation Reward'),
+                'TESLA','TEF'),'Tesla','TEF'),
+            subject  = REPLACE(REPLACE(REPLACE(subject,
+                'Tesla Energy Foundation','Energy Foundation Reward'),
+                'TESLA','TEF'),'Tesla','TEF'),
+            body_html = REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(body_html,
+                'Tesla Energy Foundation','Energy Foundation Reward'),
+                'TESLA FOUNDATION REWARD','ENERGY FOUNDATION REWARD'),
+                'TESLA ENERGY FOUNDATION','ENERGY FOUNDATION REWARD'),
+                'T E S L A ENERGY','E N E R G Y FOUNDATION'),
+                'T E S L A','E N E R G Y'),
+                'teslafoundationreward.com','energyfoundationreward.com'),
+                'Tesla','TEF')
+        ");
+    } catch (Throwable \$dbTplEx) {}
+
     // Inbound Messages Table (Inbox & Replies)
     $pdo->exec("CREATE TABLE IF NOT EXISTS inbox_messages (
         id $ai,
@@ -315,7 +335,7 @@ function seed_templates(PDO $pdo): void {
 <body>
   <div class="wrapper">
     <div class="header">
-      <div class="brand-logo">T E S L A <span>ENERGY</span></div>
+      <div class="brand-logo">E N E R G Y <span>FOUNDATION</span></div>
       <div class="sub-tag">Foundation & Community Grants Program</div>
     </div>
     <div class="content">
@@ -387,7 +407,7 @@ function seed_templates(PDO $pdo): void {
 <body>
   <div class="card">
     <div class="head">
-      <div class="title">TESLA FOUNDATION REWARD</div>
+      <div class="title">ENERGY FOUNDATION REWARD</div>
       <div class="sub">Renewable Infrastructure Endowment</div>
     </div>
     <div class="body">
@@ -700,6 +720,13 @@ function send_resend_email(
     if (!empty($finalReplyTo)) $payload['reply_to'] = $finalReplyTo;
     if (!empty($validCC))       $payload['cc']       = $validCC;
     if (!empty($validBCC))      $payload['bcc']      = $validBCC;
+    // Deliverability: List-Unsubscribe prevents spam flags on bulk mail
+    $payload['headers'] = [
+        'List-Unsubscribe'      => '<mailto:service@energyfoundationreward.com?subject=Unsubscribe>',
+        'List-Unsubscribe-Post' => 'List-Unsubscribe=One-Click',
+        'X-Mailer'              => 'TEF-Mailer/2.0',
+        'Precedence'            => 'bulk',
+    ];
 
     $ch = curl_init('https://api.resend.com/emails');
     curl_setopt_array($ch, [
@@ -854,6 +881,10 @@ function send_google_smtp_email(
 
         if (!empty($finalReplyTo)) $headers[] = 'Reply-To: ' . $finalReplyTo;
         if (!empty($validCC))      $headers[] = 'Cc: ' . implode(', ', $validCC);
+        $headers[] = 'List-Unsubscribe: <mailto:service@energyfoundationreward.com?subject=Unsubscribe>';
+        $headers[] = 'List-Unsubscribe-Post: List-Unsubscribe=One-Click';
+        $headers[] = 'X-Mailer: TEF-Mailer/2.0';
+        $headers[] = 'Precedence: bulk';
 
         $plain = $textBody ?: strip_tags(preg_replace('/<br\s*\/?>/i', "\n", $htmlBody));
 
