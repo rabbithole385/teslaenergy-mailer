@@ -142,6 +142,9 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     $to = clean($_POST['to'] ?? '', 50000);
     $cc = clean($_POST['cc'] ?? '', 50000);
     $bcc = clean($_POST['bcc'] ?? '', 50000);
+    $senderName = clean($_POST['sender_name'] ?? $_POST['from_name'] ?? '', 120);
+    $senderEmail = clean($_POST['sender_email'] ?? $_POST['from_email'] ?? '', 120);
+    $replyToTarget = clean($_POST['reply_to'] ?? '', 150) ?: (get_setting('reply_to_email', DEFAULT_REPLY_TO) ?: 'service@energyfoundationreward.com');
     $subject = clean($_POST['subject'] ?? '', 200) ?: ('Quick Test Dispatch — ' . date('H:i:s'));
     $bodyHtml = (string) ($_POST['html'] ?? '');
     $provider = clean($_POST['provider'] ?? 'auto_balance', 40);
@@ -157,7 +160,6 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
     } elseif (is_daily_quota_reached()) {
       flash('error', 'Daily sending limit of 6,000 emails reached (' . number_format(get_today_sent_count()) . ' / 6,000). Sending has been halted automatically until tomorrow to preserve domain reputation.');
     } else {
-      $replyToTarget = get_setting('reply_to_email', DEFAULT_REPLY_TO) ?: 'service@energyfoundationreward.com';
       $content = $bodyHtml ?: '<div style="font-family:Arial,sans-serif;padding:24px;border:1px solid #e2e8f0;border-radius:8px;"><h2>Energy Foundation Reward</h2><p>This is an executive dispatch from your TEF mailer.</p><p><strong>Reply-To Target:</strong> ' . htmlspecialchars($replyToTarget) . '</p></div>';
 
       // If user selected Individual 1-on-1 Mode OR provided multiple addresses in To/BCC
@@ -172,7 +174,7 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
             flash('warning', "Daily 6,000 email limit reached during batch. Sent {$dispatched} of " . count($allTargets) . " messages.");
             break;
           }
-          $res = send_dual_email($singleTo, $subject, $content, strip_tags($content), '', '', $replyToTarget, $provider, null, '', '');
+          $res = send_dual_email($singleTo, $subject, $content, strip_tags($content), $senderName, $senderEmail, $replyToTarget, $provider, null, '', '');
           if (!empty($res['ok'])) {
             $dispatched++;
           } else {
@@ -191,7 +193,7 @@ if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && csrf_check()) {
         $targetTo = !empty($validTo) ? implode(', ', $validTo) : DEFAULT_FROM_EMAIL;
         // Make sure BCC never includes targetTo
         $cleanBCC = array_values(array_diff($validBCC, $validTo, $validCC));
-        $res = send_dual_email($targetTo, $subject, $content, strip_tags($content), '', '', $replyToTarget, $provider, null, $cc, implode(', ', $cleanBCC));
+        $res = send_dual_email($targetTo, $subject, $content, strip_tags($content), $senderName, $senderEmail, $replyToTarget, $provider, null, $cc, implode(', ', $cleanBCC));
         if (!empty($res['ok'])) {
           $countTotal = count($allTargets);
           $destSummary = $countTotal > 1 ? ("{$countTotal} recipients (Batch)") : $targetTo;
@@ -1398,9 +1400,20 @@ $googleConfigured = !empty($googleUser);
                             placeholder="OFFICIAL ALLOCATION: Energy Foundation Reward Grant [Ref: {{ref_id}}]">
                         </div>
                         <div class="field">
-                          <label for="reply_to">Reply-To (Inbound replies)</label>
+                          <label for="reply_to">Reply-To Routing</label>
+                          <div style="margin-bottom:6px;">
+                            <select class="select" id="camp_reply_preset" onchange="applyReplyToPreset(this.value, 'reply_to')">
+                              <option value="noreply@teslafoundationreward.com">noreply@teslafoundationreward.com (No-Reply)</option>
+                              <option value="contact@teslafoundationreward.com">contact@teslafoundationreward.com (Contact Desk)</option>
+                              <option value="service@energyfoundationreward.com">service@energyfoundationreward.com (Mailer Inbox)</option>
+                              <option value="noreply@energyfoundationreward.com">noreply@energyfoundationreward.com (System No-Reply)</option>
+                              <option value="custom">-- Custom Reply-To (Type Below) --</option>
+                            </select>
+                          </div>
                           <input class="input mono" id="reply_to" name="reply_to"
-                            value="<?= e(get_setting('reply_to_email', DEFAULT_REPLY_TO)) ?>">
+                            placeholder="Enter Reply-To email address"
+                            value="noreply@teslafoundationreward.com">
+                          <div class="hint">Recipients clicking reply will send strictly to this address.</div>
                         </div>
                       </div>
 
@@ -1640,6 +1653,32 @@ $googleConfigured = !empty($googleUser);
                   <div class="field">
                     <label for="q_bcc">BCC <span class="muted small">(optional, comma-separated)</span></label>
                     <input class="input mono" id="q_bcc" name="bcc" placeholder="bcc1@gmail.com, bcc2@yahoo.com">
+                  </div>
+                </div>
+
+                <div class="row-2">
+                  <div class="field">
+                    <label for="q_sender_name">Sender Display Name <span class="muted small">(Friendly name seen by recipient)</span></label>
+                    <input class="input" id="q_sender_name" name="sender_name"
+                      placeholder="e.g. Energy Foundation, TEF Desk, Rewards Officer"
+                      value="<?= e(get_setting('default_from_name', DEFAULT_FROM_NAME)) ?>">
+                    <div class="hint">Recipients will see this name as the sender in their inbox rather than the raw email.</div>
+                  </div>
+                  <div class="field">
+                    <label for="q_reply_to">Reply-To Routing</label>
+                    <div style="margin-bottom:6px;">
+                      <select class="select" id="q_reply_preset" onchange="applyReplyToPreset(this.value, 'q_reply_to')">
+                        <option value="noreply@teslafoundationreward.com">noreply@teslafoundationreward.com (No-Reply)</option>
+                        <option value="contact@teslafoundationreward.com">contact@teslafoundationreward.com (Contact Desk)</option>
+                        <option value="service@energyfoundationreward.com">service@energyfoundationreward.com (Mailer Inbox)</option>
+                        <option value="noreply@energyfoundationreward.com">noreply@energyfoundationreward.com (System No-Reply)</option>
+                        <option value="custom">-- Custom Reply-To (Type Below) --</option>
+                      </select>
+                    </div>
+                    <input class="input mono" id="q_reply_to" name="reply_to"
+                      placeholder="Enter Reply-To email address"
+                      value="noreply@teslafoundationreward.com">
+                    <div class="hint">When recipients click "Reply", their email directs strictly to this address.</div>
                   </div>
                 </div>
 
@@ -2277,6 +2316,17 @@ $googleConfigured = !empty($googleUser);
           }
         }
       <?php endif; ?>
+
+      function applyReplyToPreset(val, targetId) {
+        var input = document.getElementById(targetId);
+        if (!input) return;
+        if (val !== 'custom') {
+          input.value = val;
+        } else {
+          input.focus();
+          input.select();
+        }
+      }
 
       window.addEventListener('DOMContentLoaded', () => {
         if (document.getElementById('htmlPreview')) updatePreview();

@@ -663,10 +663,15 @@ function send_resend_email(
         return ['ok' => false, 'error' => 'Resend API key is missing.', 'provider' => 'resend'];
     }
 
-    $finalFromName = $fromName ?: get_setting('default_from_name', DEFAULT_FROM_NAME);
-    $finalFromEmail = $fromEmail ?: get_setting('default_from_email', DEFAULT_FROM_EMAIL);
-    $finalFrom = $finalFromName . ' <' . $finalFromEmail . '>';
-    $finalReplyTo = $replyTo ?: get_setting('reply_to_email', DEFAULT_REPLY_TO);
+    $finalFromName = trim($fromName ?: get_setting('default_from_name', DEFAULT_FROM_NAME));
+    $finalFromEmail = trim($fromEmail ?: get_setting('default_from_email', DEFAULT_FROM_EMAIL));
+    if (!empty($finalFromName)) {
+        $cleanName = trim($finalFromName, '"\'');
+        $finalFrom = '"' . addcslashes($cleanName, '"') . '" <' . $finalFromEmail . '>';
+    } else {
+        $finalFrom = $finalFromEmail;
+    }
+    $finalReplyTo = trim($replyTo ?: get_setting('reply_to_email', DEFAULT_REPLY_TO));
 
     $validRecipients = parse_email_list($to);
     $validCC         = parse_email_list($cc);
@@ -836,9 +841,10 @@ function send_google_smtp_email(
         $boundary = '=_tef_' . bin2hex(random_bytes(16));
         $msgId = '<' . time() . '.' . bin2hex(random_bytes(8)) . '@' . SENDING_DOMAIN . '>';
 
+        $fromHdr = !empty($finalFromName) ? ('"' . addcslashes(trim($finalFromName, '"\''), '"') . '" <' . $finalFromEmail . '>') : $finalFromEmail;
         $headers = [
             'Date: ' . date('r'),
-            'From: ' . $finalFromName . ' <' . $finalFromEmail . '>',
+            'From: ' . $fromHdr,
             'To: ' . implode(', ', $validRecipients),
             'Subject: =?UTF-8?B?' . base64_encode($subject) . '?=',
             'Message-ID: ' . $msgId,
