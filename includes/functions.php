@@ -216,6 +216,11 @@ function init_schema(PDO $pdo, bool $isMySQL = false): void {
         ");
     } catch (Throwable $dbCleanEx) {}
 
+    // Always sync active RESEND_API_KEY from environment if present
+    if (!empty(env('RESEND_API_KEY'))) {
+        set_setting('resend_api_key', env('RESEND_API_KEY'));
+    }
+
     // Default provider mode to Resend only (Google Workspace will connect later)
     $googlePass = get_setting('google_smtp_pass', '');
     if (empty($googlePass)) {
